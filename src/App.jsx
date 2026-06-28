@@ -13,7 +13,7 @@ const BORDER = "#2E3340";
 const TEXT   = "#E8EAF0";
 const MUTED  = "#6B7280";
 
-// ─── Bracket Builder ──────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 function nextPow2(n) { let p = 1; while (p < n) p *= 2; return p; }
 function isPow2(n)   { return n > 0 && (n & (n - 1)) === 0; }
 
@@ -27,21 +27,11 @@ function shuffleArray(array) {
   return arr;
 }
 
-/**
- * Builds the full double-elimination structure with prelim rounds instead of BYEs.
- * Returns:
- *   matchMap: { [id]: match }
- *   prelimRounds: id[][] (winners prelims)
- *   winnersRounds: id[][]
- *   losersRounds:  id[][]
- *   grandFinalId:  id
- */
+// ─── Bracket Builder ──────────────────────────────────────────────────────────
 function buildBracket(players) {
-  // Randomize player order
   const shuffledPlayers = shuffleArray(players);
-  
   const size = nextPow2(shuffledPlayers.length);
-  const numByes = size - shuffledPlayers.length;
+  const wbR1Size = size / 2;
   
   let uid = 0;
   const newId = () => `m${++uid}`;
@@ -66,39 +56,24 @@ function buildBracket(players) {
   };
 
   // ── Calculate prelim structure ───────────────────────────────────────────
-  // If we have N players and need size S, then:
-  // - numByes players get a "bye" to round 1
-  // - (N - numByes) * 2 - N = N - numByes players need prelims
-  // Actually: numPrelimMatches = N - (size/2) when N > size/2
-  // Or: numPrelimMatches = numByes (the extras need to play in)
-  
-  // Number of spots in WB Round 1
-  const wbR1Size = size / 2;
-  
-  // If players <= wbR1Size, no prelims needed, but we might have empty spots
-  // If players > wbR1Size, we need prelim matches
-  
   let prelimRounds = [];
-  let wbR1Seeds = []; // { player: string | null, fromMatchId: string | null }
+  let wbR1Seeds = [];
   
   if (shuffledPlayers.length <= wbR1Size) {
     // No prelims needed - all players go directly to WB R1
-    // Pad with nulls for spacing but we'll handle matchups differently
-    for (let i = 0; i < wbR1Size; i++) {
-      wbR1Seeds.push({ 
-        player: shuffledPlayers[i] || null, 
-        fromMatchId: null 
-      });
+    for (let i = 0; i < shuffledPlayers.length; i++) {
+      wbR1Seeds.push({ player: shuffledPlayers[i], fromMatchId: null });
+    }
+    // Pad remaining spots with null (will create uneven bracket)
+    while (wbR1Seeds.length < wbR1Size) {
+      wbR1Seeds.push({ player: null, fromMatchId: null });
     }
   } else {
     // We need prelim matches
-    // Number of players that need to play prelims to reduce to wbR1Size
     const numPrelimMatches = shuffledPlayers.length - wbR1Size;
     const numPrelimPlayers = numPrelimMatches * 2;
     
-    // Players who go directly to WB R1 (got a "bye" from prelims)
     const directPlayers = shuffledPlayers.slice(0, shuffledPlayers.length - numPrelimPlayers);
-    // Players who must play prelims
     const prelimPlayers = shuffledPlayers.slice(shuffledPlayers.length - numPrelimPlayers);
     
     // Create prelim matches
@@ -111,8 +86,7 @@ function buildBracket(players) {
     }
     prelimRounds.push(prelimR1);
     
-    // Build wbR1Seeds: direct players + prelim winners
-    // Interleave them for balanced bracket
+    // Build wbR1Seeds: interleave direct players and prelim winners
     let directIdx = 0;
     let prelimIdx = 0;
     for (let i = 0; i < wbR1Size; i++) {
@@ -120,8 +94,10 @@ function buildBracket(players) {
         wbR1Seeds.push({ player: directPlayers[directIdx++], fromMatchId: null });
       } else if (prelimIdx < prelimR1.length) {
         wbR1Seeds.push({ player: null, fromMatchId: prelimR1[prelimIdx++] });
-      } else {
+      } else if (directIdx < directPlayers.length) {
         wbR1Seeds.push({ player: directPlayers[directIdx++], fromMatchId: null });
+      } else {
+        wbR1Seeds.push({ player: null, fromMatchId: null });
       }
     }
   }
@@ -135,7 +111,6 @@ function buildBracket(players) {
     const id = newMatch();
     const m = matchMap[id];
     
-    // Set up p1
     if (seedA.fromMatchId) {
       m.p1FromMatchId = seedA.fromMatchId;
       matchMap[seedA.fromMatchId].winnerGoesToMatchId = id;
@@ -144,13 +119,23 @@ function buildBracket(players) {
       m.p1 = seedA.player;
     }
     
-    // Set up p2
     if (seedB.fromMatchId) {
       m.p2FromMatchId = seedB.fromMatchId;
       matchMap[seedB.fromMatchId].winnerGoesToMatchId = id;
       matchMap[seedB.fromMatchId].winnerGoesToSlot = 'p2';
     } else {
       m.p2 = seedB.player;
+    }
+    
+    // Handle case where one player is null (shouldn't happen with prelims, but safety)
+    if (m.p1 && !m.p2 && !m.p2FromMatchId) {
+      m.isBye = true;
+      m.autoWinner = m.p1;
+      m.winner = m.p1;
+    } else if (m.p2 && !m.p1 && !m.p1FromMatchId) {
+      m.isBye = true;
+      m.autoWinner = m.p2;
+      m.winner = m.p2;
     }
     
     wbR1.push(id);
@@ -163,10 +148,10 @@ function buildBracket(players) {
     const round = [];
     for (let i = 0; i < prev.length; i += 2) {
       const id = newMatch();
-      matchMap[prev[i]].winnerGoesToMatchId  = id;
-      matchMap[prev[i]].winnerGoesToSlot     = 'p1';
+      matchMap[prev[i]].winnerGoesToMatchId = id;
+      matchMap[prev[i]].winnerGoesToSlot = 'p1';
       matchMap[prev[i+1]].winnerGoesToMatchId = id;
-      matchMap[prev[i+1]].winnerGoesToSlot   = 'p2';
+      matchMap[prev[i+1]].winnerGoesToSlot = 'p2';
       matchMap[id].p1FromMatchId = prev[i];
       matchMap[id].p2FromMatchId = prev[i+1];
       round.push(id);
@@ -175,62 +160,60 @@ function buildBracket(players) {
     prev = round;
   }
 
-  // ── Losers Bracket ───────────────────────────────────────────────────────
-  const losersRounds = [];
-  
-  // First, handle prelim losers if any
-  if (prelimRounds.length > 0) {
-    const prelimR1 = prelimRounds[0];
-    
-    if (prelimR1.length >= 2) {
-      // Prelim losers play each other in LB Prelim Round
-      const lbPrelim = [];
-      for (let i = 0; i < prelimR1.length; i += 2) {
-        if (i + 1 < prelimR1.length) {
-          const id = newMatch();
-          matchMap[prelimR1[i]].loserGoesToMatchId = id;
-          matchMap[prelimR1[i]].loserGoesToSlot = 'p1';
-          matchMap[prelimR1[i + 1]].loserGoesToMatchId = id;
-          matchMap[prelimR1[i + 1]].loserGoesToSlot = 'p2';
-          matchMap[id].p1FromMatchId = prelimR1[i];
-          matchMap[id].p2FromMatchId = prelimR1[i + 1];
-          matchMap[id].p1IsLoserOf = true;
-          matchMap[id].p2IsLoserOf = true;
-          lbPrelim.push(id);
-        } else {
-          // Odd prelim loser - they'll need to be handled
-          // Create a placeholder that will merge with WB R1 losers
-        }
-      }
-      if (lbPrelim.length > 0) {
-        losersRounds.push(lbPrelim);
-      }
-    } else if (prelimR1.length === 1) {
-      // Single prelim match - loser goes to face WB R1 loser
-      // Will be handled in the WB R1 loser processing
+  // Pre-populate BYE auto-winners into next rounds
+  for (const id of wbR1) {
+    const m = matchMap[id];
+    if (m.autoWinner && m.winnerGoesToMatchId) {
+      matchMap[m.winnerGoesToMatchId][m.winnerGoesToSlot] = m.autoWinner;
     }
   }
 
-  // LBR1: losers of WBR1 play each other (or merge with prelim LB survivors)
-  const lbR1 = [];
-  const wbR1Losers = wbR1;
+  // ── Losers Bracket ───────────────────────────────────────────────────────
+  const losersRounds = [];
   
-  if (losersRounds.length > 0) {
-    // We have prelim LB round, so WB R1 losers merge with prelim LB winners
+  // Handle prelim losers first
+  if (prelimRounds.length > 0 && prelimRounds[0].length >= 2) {
+    const prelimR1 = prelimRounds[0];
+    const lbPrelim = [];
+    
+    for (let i = 0; i < prelimR1.length; i += 2) {
+      if (i + 1 < prelimR1.length) {
+        const id = newMatch();
+        matchMap[prelimR1[i]].loserGoesToMatchId = id;
+        matchMap[prelimR1[i]].loserGoesToSlot = 'p1';
+        matchMap[prelimR1[i + 1]].loserGoesToMatchId = id;
+        matchMap[prelimR1[i + 1]].loserGoesToSlot = 'p2';
+        matchMap[id].p1FromMatchId = prelimR1[i];
+        matchMap[id].p2FromMatchId = prelimR1[i + 1];
+        matchMap[id].p1IsLoserOf = true;
+        matchMap[id].p2IsLoserOf = true;
+        lbPrelim.push(id);
+      }
+    }
+    if (lbPrelim.length > 0) {
+      losersRounds.push(lbPrelim);
+    }
+  }
+
+  // LB Round 1: WB R1 losers
+  const wbR1Losers = wbR1.filter(id => !matchMap[id].isBye);
+  
+  if (losersRounds.length > 0 && wbR1Losers.length > 0) {
+    // Merge WB R1 losers with prelim LB winners
     const prevLB = losersRounds[losersRounds.length - 1];
     const mergeRound = [];
     
-    // Pair WB R1 losers with prelim LB winners
-    for (let i = 0; i < wbR1Losers.length; i++) {
+    const maxLen = Math.max(wbR1Losers.length, prevLB.length);
+    for (let i = 0; i < maxLen; i++) {
       const id = newMatch();
       
-      // p1 = loser of WB R1 match
-      matchMap[wbR1Losers[i]].loserGoesToMatchId = id;
-      matchMap[wbR1Losers[i]].loserGoesToSlot = 'p1';
-      matchMap[id].p1FromMatchId = wbR1Losers[i];
-      matchMap[id].p1IsLoserOf = true;
+      if (i < wbR1Losers.length) {
+        matchMap[wbR1Losers[i]].loserGoesToMatchId = id;
+        matchMap[wbR1Losers[i]].loserGoesToSlot = 'p1';
+        matchMap[id].p1FromMatchId = wbR1Losers[i];
+        matchMap[id].p1IsLoserOf = true;
+      }
       
-      // p2 = winner of prelim LB match (if available)
       if (i < prevLB.length) {
         matchMap[prevLB[i]].winnerGoesToMatchId = id;
         matchMap[prevLB[i]].winnerGoesToSlot = 'p2';
@@ -246,36 +229,43 @@ function buildBracket(players) {
     if (mergeRound.length > 1) {
       const battleRound = [];
       for (let i = 0; i < mergeRound.length; i += 2) {
-        const id = newMatch();
-        matchMap[mergeRound[i]].winnerGoesToMatchId = id;
-        matchMap[mergeRound[i]].winnerGoesToSlot = 'p1';
-        matchMap[mergeRound[i + 1]].winnerGoesToMatchId = id;
-        matchMap[mergeRound[i + 1]].winnerGoesToSlot = 'p2';
-        matchMap[id].p1FromMatchId = mergeRound[i];
-        matchMap[id].p2FromMatchId = mergeRound[i + 1];
-        battleRound.push(id);
+        if (i + 1 < mergeRound.length) {
+          const id = newMatch();
+          matchMap[mergeRound[i]].winnerGoesToMatchId = id;
+          matchMap[mergeRound[i]].winnerGoesToSlot = 'p1';
+          matchMap[mergeRound[i + 1]].winnerGoesToMatchId = id;
+          matchMap[mergeRound[i + 1]].winnerGoesToSlot = 'p2';
+          matchMap[id].p1FromMatchId = mergeRound[i];
+          matchMap[id].p2FromMatchId = mergeRound[i + 1];
+          battleRound.push(id);
+        }
       }
-      losersRounds.push(battleRound);
+      if (battleRound.length > 0) {
+        losersRounds.push(battleRound);
+      }
     }
-  } else {
+  } else if (wbR1Losers.length >= 2) {
     // No prelim rounds, standard LB R1
+    const lbR1 = [];
     for (let i = 0; i < wbR1Losers.length; i += 2) {
-      const id = newMatch();
-      matchMap[wbR1Losers[i]].loserGoesToMatchId = id;
-      matchMap[wbR1Losers[i]].loserGoesToSlot = 'p1';
-      matchMap[wbR1Losers[i + 1]].loserGoesToMatchId = id;
-      matchMap[wbR1Losers[i + 1]].loserGoesToSlot = 'p2';
-      matchMap[id].p1FromMatchId = wbR1Losers[i];
-      matchMap[id].p2FromMatchId = wbR1Losers[i + 1];
-      matchMap[id].p1IsLoserOf = true;
-      matchMap[id].p2IsLoserOf = true;
-      lbR1.push(id);
+      if (i + 1 < wbR1Losers.length) {
+        const id = newMatch();
+        matchMap[wbR1Losers[i]].loserGoesToMatchId = id;
+        matchMap[wbR1Losers[i]].loserGoesToSlot = 'p1';
+        matchMap[wbR1Losers[i + 1]].loserGoesToMatchId = id;
+        matchMap[wbR1Losers[i + 1]].loserGoesToSlot = 'p2';
+        matchMap[id].p1FromMatchId = wbR1Losers[i];
+        matchMap[id].p2FromMatchId = wbR1Losers[i + 1];
+        matchMap[id].p1IsLoserOf = true;
+        matchMap[id].p2IsLoserOf = true;
+        lbR1.push(id);
+      }
     }
     if (lbR1.length) losersRounds.push(lbR1);
   }
 
-  // Subsequent LB rounds (from WB R2 onwards)
-  const wbRoundsForLosers = winnersRounds.slice(1, -1); // WB rounds 2 to semi-final
+  // Subsequent LB rounds from WB R2 onwards
+  const wbRoundsForLosers = winnersRounds.slice(1, -1);
 
   for (let wIdx = 0; wIdx < wbRoundsForLosers.length; wIdx++) {
     const dropIns = wbRoundsForLosers[wIdx];
@@ -283,7 +273,7 @@ function buildBracket(players) {
     
     if (!prevLB || prevLB.length === 0) continue;
 
-    // Merge round: prev LB winners vs new drop-ins
+    // Merge round
     const mergeRound = [];
     for (let i = 0; i < prevLB.length; i++) {
       const id = newMatch();
@@ -292,7 +282,7 @@ function buildBracket(players) {
       matchMap[id].p1FromMatchId = prevLB[i];
       matchMap[id].p1IsLoserOf = false;
       
-      if (dropIns[i]) {
+      if (i < dropIns.length) {
         matchMap[dropIns[i]].loserGoesToMatchId = id;
         matchMap[dropIns[i]].loserGoesToSlot = 'p2';
         matchMap[id].p2FromMatchId = dropIns[i];
@@ -302,4 +292,11 @@ function buildBracket(players) {
     }
     losersRounds.push(mergeRound);
 
-    // Battle round (if >1 match)
+    // Battle round
+    if (mergeRound.length > 1) {
+      const battleRound = [];
+      for (let i = 0; i < mergeRound.length; i += 2) {
+        if (i + 1 < mergeRound.length) {
+          const id = newMatch();
+          matchMap[mergeRound[i]].winnerGoesToMatchId = id;
+          matchMap[mergeRound[i]].winnerGoesTo
