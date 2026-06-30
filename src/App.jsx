@@ -28,9 +28,9 @@ function useViewportScale() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
   // tiers: mobile (<640), tablet (640-1024), desktop (>1024)
-  if (width >= 1024) return { tier: "desktop", scale: 1.35, cardWidth: 220, pip: 13, btn: 28, btnFont: 17 };
-  if (width >= 640)  return { tier: "tablet",  scale: 1.15, cardWidth: 190, pip: 11, btn: 23, btnFont: 14 };
-  return { tier: "mobile", scale: 1, cardWidth: 170, pip: 9, btn: 18, btnFont: 12 };
+  if (width >= 1024) return { tier: "desktop", scale: 1.35, cardWidth: 250, pip: 13, btn: 26, btnFont: 16 };
+  if (width >= 640)  return { tier: "tablet",  scale: 1.15, cardWidth: 215, pip: 10, btn: 21, btnFont: 13 };
+  return { tier: "mobile", scale: 1, cardWidth: 198, pip: 8, btn: 17, btnFont: 11 };
 }
 
 // ─── Generic helpers ──────────────────────────────────────────────────────────
@@ -373,12 +373,24 @@ function recordWinner(matchMap, matchId, winner) {
 }
 
 // Change a previously-recorded winner: clears anything downstream that used
-// the old result, then records the new one.
+// the old result, then records the new one. Game scores are reset to a
+// clean winner/need-loser/0 state so edited matches never show stale or
+// inconsistent (e.g. negative) per-player scores.
 function changeWinner(matchMap, matchId, newWinner) {
   const m = matchMap[matchId];
   if (!m || m.isBye) return matchMap;
   let cleared = clearDownstream(matchMap, matchId);
-  cleared = { ...cleared, [matchId]: { ...cleared[matchId], winner: null, loser: null } };
+  const need = gamesToWin(m.bestOf || 3);
+  const isP1Winner = newWinner === m.p1;
+  cleared = {
+    ...cleared,
+    [matchId]: {
+      ...cleared[matchId],
+      winner: null, loser: null,
+      p1Games: isP1Winner ? need : 0,
+      p2Games: isP1Winner ? 0 : need,
+    },
+  };
   return recordWinner(cleared, matchId, newWinner);
 }
 
@@ -400,6 +412,10 @@ function applyScoreChange(matchMap, matchId, who, delta) {
   const need = gamesToWin(m.bestOf || 3);
   let p1Games = m.p1Games || 0;
   let p2Games = m.p2Games || 0;
+  // Clamp to [0, need] so a score can never go negative, and a player's
+  // game count can never exceed what's needed to win (e.g. best of 3 ->
+  // max 2). The loser keeps whatever count they reached, e.g. a 2-0 leaves
+  // the loser at 0, a 2-1 leaves the loser at 1.
   if (who === "p1") p1Games = Math.max(0, Math.min(need, p1Games + delta));
   else p2Games = Math.max(0, Math.min(need, p2Games + delta));
 
@@ -520,37 +536,34 @@ function computeStandings(group, matches) {
 // UI: shared bits
 // ═══════════════════════════════════════════════════════════════════════════
 
-function ScorePips({ m, accent, onScore, disabled, scale }) {
+function ScoreInline({ m, who, accent, onScore, scale }) {
   const need = gamesToWin(m.bestOf || 3);
   if (m.isBye) return null;
   const s = scale || { pip: 9, btn: 18, btnFont: 12 };
-  const Row = ({ who, games, other }) => (
-    <div style={{ display: "flex", alignItems: "center", gap: Math.round(s.btn * 0.33) }}>
+  const games = who === "p1" ? (m.p1Games || 0) : (m.p2Games || 0);
+  const disabled = !!m.winner || !m.p1 || !m.p2;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: Math.round(s.btn * 0.3), flexShrink: 0 }}>
       <button
-        disabled={disabled || !!m.winner || !m.p1 || !m.p2}
+        disabled={disabled}
         onClick={(e) => { e.stopPropagation(); onScore(m.id, who, -1); }}
         style={pipBtnStyle(false, s)}
       >−</button>
-      <div style={{ display: "flex", gap: 4, minWidth: (s.pip + 4) * need }}>
+      <div style={{ display: "flex", gap: 3, minWidth: (s.pip + 3) * need }}>
         {Array.from({ length: need }).map((_, i) => (
           <div key={i} style={{
             width: s.pip, height: s.pip, borderRadius: Math.max(2, Math.round(s.pip * 0.25)),
             background: i < games ? accent : BORDER,
             transition: "background 0.15s",
+            flexShrink: 0,
           }} />
         ))}
       </div>
       <button
-        disabled={disabled || !!m.winner || !m.p1 || !m.p2}
+        disabled={disabled}
         onClick={(e) => { e.stopPropagation(); onScore(m.id, who, 1); }}
         style={pipBtnStyle(true, s)}
       >+</button>
-    </div>
-  );
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: Math.round(s.btn * 0.22), padding: `${Math.round(s.btn * 0.33)}px 10px ${Math.round(s.btn * 0.44)}px` }}>
-      <Row who="p1" games={m.p1Games || 0} />
-      <Row who="p2" games={m.p2Games || 0} />
     </div>
   );
 }
@@ -687,16 +700,15 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
                 {slot === "p1" ? m.p1Games : m.p2Games}
               </div>
             )}
+            {!settled && useScoring && !m.isBye && m.p1 && m.p2 && (
+              <ScoreInline m={m} who={slot} accent={accent} onScore={onScore} scale={s} />
+            )}
             {canTap && !useScoring && (
               <span style={{ fontSize: 18, color: `${accent}55`, flexShrink: 0, lineHeight: 1 }}>›</span>
             )}
           </div>
         );
       })}
-
-      {useScoring && !settled && !m.isBye && m.p1 && m.p2 && (
-        <ScorePips m={m} accent={accent} onScore={onScore} scale={s} />
-      )}
     </div>
   );
 }
@@ -1305,19 +1317,18 @@ export default function App() {
     (async () => {
       try {
         const res = await window.storage.get(STORAGE_KEY, false);
-        // A successful get() with no stored key can return null OR throw,
-        // depending on backend — handle both as "nothing saved".
         if (res && res.value) {
           const parsed = JSON.parse(res.value);
           setSavedSnapshot(parsed);
         }
       } catch (e) {
-        // Distinguish "key not found" (expected, no save yet) from a real
-        // storage failure so we don't silently hide actual problems.
-        const msg = String(e && e.message ? e.message : e);
-        if (!/not found|no such key|404/i.test(msg)) {
-          setLoadError(msg);
-        }
+        // window.storage.get() throws (rather than returning null) when the
+        // key doesn't exist yet — which is the normal, expected case the
+        // very first time someone opens the app, or any time there's no
+        // saved tournament. There's no reliable way to distinguish that from
+        // a real storage failure by message text, so we treat any get()
+        // failure here as "nothing saved" and stay silent. Real failures
+        // will still surface from set()/delete() calls elsewhere.
       } finally {
         setScreen("setup");
       }
