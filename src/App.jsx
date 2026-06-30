@@ -540,7 +540,7 @@ function ScoreInline({ m, who, accent, onScore, scale }) {
   const need = gamesToWin(m.bestOf || 3);
   if (m.isBye) return null;
   const s = scale || { pip: 9, btn: 18, btnFont: 12 };
-  const games = who === "p1" ? (m.p1Games || 0) : (m.p2Games || 0);
+  const games = Math.max(0, who === "p1" ? (m.p1Games || 0) : (m.p2Games || 0));
   const disabled = !!m.winner || !m.p1 || !m.p2;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: Math.round(s.btn * 0.3), flexShrink: 0 }}>
@@ -697,7 +697,7 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
             </div>
             {settled && useScoring && !m.isBye && (
               <div style={{ fontSize: s.tier === "desktop" ? 16 : 13, fontWeight: 700, color: isWinner ? accent : MUTED }}>
-                {slot === "p1" ? m.p1Games : m.p2Games}
+                {Math.max(0, slot === "p1" ? (m.p1Games || 0) : (m.p2Games || 0))}
               </div>
             )}
             {!settled && useScoring && !m.isBye && m.p1 && m.p2 && (
@@ -1071,7 +1071,7 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
         </div>
         <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 12, overflow: "hidden", marginBottom: 24 }}>
           <div style={{ display: "grid", gridTemplateColumns: "24px 1fr 36px 50px 50px", padding: "8px 12px", fontSize: 9, color: MUTED, fontFamily: "monospace", borderBottom: `1px solid ${BORDER}` }}>
-            <div>#</div><div>PLAYER</div><div>W-L</div><div>PPG</div><div>DIFF</div>
+            <div>#</div><div>PLAYER</div><div>W-L</div><div>PPG</div><div title="Game differential (games won minus games lost)">±GMS</div>
           </div>
           {allStandings[activeGroup].map((s, i) => (
             <div key={s.player} style={{
@@ -1358,16 +1358,20 @@ export default function App() {
     }
   }, []);
 
-  // Persist whenever core state changes (debounced)
+  // Persist whenever core state changes. Debounce is intentionally very
+  // short (just enough to coalesce rapid taps like repeated +/- presses)
+  // rather than relying on visibilitychange/pagehide to catch the save —
+  // browsers don't reliably let in-flight async work finish once a tab is
+  // actually closing, so the safest approach is to write almost immediately
+  // after every change instead of batching and hoping unload hooks fire.
   useEffect(() => {
     if (screen === "loading" || screen === "setup") return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => { flushSave(); }, 400);
+    saveTimer.current = setTimeout(() => { flushSave(); }, 120);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [screen, players, grandFinal, useScoring, bestOf, bracketData, groupState, flushSave]);
 
-  // Also flush immediately when the tab is hidden/closed, since the app
-  // may close before the debounce timer fires.
+  // Still attempt a flush on hide/close as a best-effort extra safety net.
   useEffect(() => {
     const onHide = () => { flushSave(); };
     document.addEventListener("visibilitychange", onHide);
