@@ -743,7 +743,7 @@ function RoundCol({ title, matchIds, matchMap, onPickWinner, onChangeWinner, onS
 // SETUP SCREEN
 // ═══════════════════════════════════════════════════════════════════════════
 
-function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, onResume, onDiscard, loadError }) {
+function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt, onResume, onDiscard, loadError }) {
   const [mode, setMode] = useState("bracket"); // "bracket" | "groups"
   const [count, setCount] = useState(8);
   const [names, setNames] = useState(Array.from({ length: 8 }, (_, i) => `Player ${i + 1}`));
@@ -802,11 +802,19 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, onResum
       {savedExists && (
         <div style={{ margin: "16px 20px 0", padding: "14px 16px", background: `${GOLD}14`, border: `1px solid ${GOLD}55`, borderRadius: 12 }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Resume saved tournament?</div>
-          <div style={{ fontSize: 11, color: MUTED, marginBottom: 10 }}>You have an in-progress tournament saved on this device.</div>
+          <div style={{ fontSize: 11, color: MUTED, marginBottom: 10 }}>
+            {savedAt ? `Last saved ${new Date(savedAt).toLocaleString()}` : "You have an in-progress tournament saved on this device."}
+          </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={onResume} style={{ flex: 1, padding: "9px", background: GOLD, border: "none", borderRadius: 8, color: "#0D0F14", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Resume</button>
             <button onClick={onDiscard} style={{ flex: 1, padding: "9px", background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 8, color: MUTED, fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Discard</button>
           </div>
+        </div>
+      )}
+
+      {!savedExists && !loadError && (
+        <div style={{ margin: "16px 20px 0", padding: "10px 14px", background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10 }}>
+          <div style={{ fontSize: 10, color: MUTED, fontFamily: "monospace" }}>No saved tournament found on this device yet.</div>
         </div>
       )}
 
@@ -1318,17 +1326,29 @@ export default function App() {
       try {
         const res = await window.storage.get(STORAGE_KEY, false);
         if (res && res.value) {
-          const parsed = JSON.parse(res.value);
-          setSavedSnapshot(parsed);
+          let parsed = null;
+          try {
+            parsed = JSON.parse(res.value);
+          } catch (parseErr) {
+            console.error("Tournament: saved snapshot was not valid JSON, discarding.", parseErr);
+            try { await window.storage.delete(STORAGE_KEY, false); } catch (delErr) {}
+            parsed = null;
+          }
+          // Only treat it as resumable if it actually has bracket or group
+          // data — an empty/blank snapshot shouldn't surface a Resume button.
+          if (parsed && (parsed.bracketData || parsed.groupState)) {
+            setSavedSnapshot(parsed);
+          } else if (parsed) {
+            console.warn("Tournament: saved snapshot had no bracket/group data, ignoring.", parsed);
+          }
         }
       } catch (e) {
         // window.storage.get() throws (rather than returning null) when the
         // key doesn't exist yet — which is the normal, expected case the
         // very first time someone opens the app, or any time there's no
-        // saved tournament. There's no reliable way to distinguish that from
-        // a real storage failure by message text, so we treat any get()
-        // failure here as "nothing saved" and stay silent. Real failures
-        // will still surface from set()/delete() calls elsewhere.
+        // saved tournament. Log it (visible in devtools) but don't surface
+        // it to the user, since it's almost always just "nothing saved".
+        console.warn("Tournament: window.storage.get() failed on load (expected if nothing saved yet):", e);
       } finally {
         setScreen("setup");
       }
@@ -1352,9 +1372,12 @@ export default function App() {
       savedAt: new Date().toISOString(),
     };
     try {
-      await window.storage.set(STORAGE_KEY, JSON.stringify(snapshot), false);
+      const result = await window.storage.set(STORAGE_KEY, JSON.stringify(snapshot), false);
+      if (!result) {
+        console.error("Tournament: storage.set() returned no result — save may have failed.");
+      }
     } catch (e) {
-      // ignore storage errors
+      console.error("Tournament: failed to save tournament state.", e);
     }
   }, []);
 
@@ -1455,6 +1478,7 @@ export default function App() {
         onGenerateBracket={handleGenerateBracket}
         onGenerateGroups={handleGenerateGroups}
         savedExists={!!savedSnapshot}
+        savedAt={savedSnapshot?.savedAt || null}
         onResume={handleResume}
         onDiscard={handleDiscard}
         loadError={loadError}
