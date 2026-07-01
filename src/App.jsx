@@ -1347,37 +1347,23 @@ export default function App() {
 
   // Load saved state on mount
   useEffect(() => {
-    (async () => {
-      try {
-        const res = await window.storage.get(STORAGE_KEY, false);
-        if (res && res.value) {
-          let parsed = null;
-          try {
-            parsed = JSON.parse(res.value);
-          } catch (parseErr) {
-            console.error("Tournament: saved snapshot was not valid JSON, discarding.", parseErr);
-            try { await window.storage.delete(STORAGE_KEY, false); } catch (delErr) {}
-            parsed = null;
-          }
-          // Only treat it as resumable if it actually has bracket or group
-          // data — an empty/blank snapshot shouldn't surface a Resume button.
-          if (parsed && (parsed.bracketData || parsed.groupState)) {
-            setSavedSnapshot(parsed);
-          } else if (parsed) {
-            console.warn("Tournament: saved snapshot had no bracket/group data, ignoring.", parsed);
-          }
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        let parsed = null;
+        try { parsed = JSON.parse(raw); } catch (e) {
+          localStorage.removeItem(STORAGE_KEY);
         }
-      } catch (e) {
-        // window.storage.get() throws (rather than returning null) when the
-        // key doesn't exist yet — which is the normal, expected case the
-        // very first time someone opens the app, or any time there's no
-        // saved tournament. Log it (visible in devtools) but don't surface
-        // it to the user, since it's almost always just "nothing saved".
-        console.warn("Tournament: window.storage.get() failed on load (expected if nothing saved yet):", e);
-      } finally {
-        setScreen("setup");
+        if (parsed && (parsed.bracketData || parsed.groupState)) {
+          setSavedSnapshot(parsed);
+        }
       }
-    })();
+    } catch (e) {
+      // localStorage unavailable (e.g. private browsing restrictions)
+      console.warn("Tournament: localStorage not available:", e);
+    } finally {
+      setScreen("setup");
+    }
   }, []);
 
   // Keep a ref of the latest persistable state so we can flush it
@@ -1389,7 +1375,7 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
   const [saveError, setSaveError] = useState(null);
 
-  const flushSave = useCallback(async () => {
+  const flushSave = useCallback(() => {
     const s = latestStateRef.current;
     if (!s || s.screen === "loading" || s.screen === "setup") return;
     const snapshot = {
@@ -1399,19 +1385,15 @@ export default function App() {
       groupState: s.groupState,
       savedAt: new Date().toISOString(),
     };
-
     setSaveStatus("saving");
     try {
-      if (!window.storage) throw new Error("window.storage is not available");
-      const json = JSON.stringify(snapshot);
-      const result = await window.storage.set(STORAGE_KEY, json, false);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
       setSaveStatus("saved");
       setSaveError(null);
     } catch (e) {
       const msg = e && e.message ? e.message : String(e);
       setSaveStatus("error");
       setSaveError(msg);
-      console.error("Tournament save failed:", msg, e);
     }
   }, []);
 
@@ -1488,8 +1470,8 @@ export default function App() {
     setScreen(savedSnapshot.screen && savedSnapshot.screen !== "setup" && savedSnapshot.screen !== "loading" ? savedSnapshot.screen : "setup");
   };
 
-  const handleDiscard = async () => {
-    try { await window.storage.delete(STORAGE_KEY, false); } catch (e) {}
+  const handleDiscard = () => {
+    try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
     setSavedSnapshot(null);
   };
 
