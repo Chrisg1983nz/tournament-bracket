@@ -713,6 +713,24 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
   );
 }
 
+// ─── SaveBadge ────────────────────────────────────────────────────────────────
+function SaveBadge({ status, error }) {
+  if (status === "idle") return null;
+  const cfg = {
+    saving: { color: MUTED,  label: "Saving…" },
+    saved:  { color: GREEN,  label: "✓ Saved" },
+    error:  { color: RED,    label: `⚠ Save failed: ${error || "unknown error"}` },
+  }[status] || null;
+  if (!cfg) return null;
+  return (
+    <div style={{
+      fontSize: 9, fontFamily: "monospace", color: cfg.color,
+      letterSpacing: "0.05em", flexShrink: 0, maxWidth: 200,
+      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+    }}>{cfg.label}</div>
+  );
+}
+
 function RoundCol({ title, matchIds, matchMap, onPickWinner, onChangeWinner, onScore, isLosers, isGrandFinal, spacing, useScoring, scale }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", flexShrink: 0 }}>
@@ -988,7 +1006,7 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
 // GROUP STAGE SCREEN
 // ═══════════════════════════════════════════════════════════════════════════
 
-function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracket }) {
+function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracket, saveStatus, saveError }) {
   const { groups, matchesByGroup, advancePerGroup, useScoring, bestOf } = groupState;
   const [activeGroup, setActiveGroup] = useState(0);
   const scale = useViewportScale();
@@ -1059,7 +1077,10 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
         <div style={{ marginTop: 10, height: 3, background: BORDER, borderRadius: 2 }}>
           <div style={{ height: "100%", borderRadius: 2, background: PURPLE, width: `${totalMatches ? (doneMatches / totalMatches) * 100 : 0}%`, transition: "width 0.3s" }} />
         </div>
-        <div style={{ display: "flex", gap: 6, marginTop: 12, overflowX: "auto" }}>
+        <div style={{ marginTop: 6 }}>
+          <SaveBadge status={saveStatus} error={saveError} />
+        </div>
+        <div style={{ display: "flex", gap: 6, marginTop: 8, overflowX: "auto" }}>
           {groups.map((g, i) => (
             <button key={i} onClick={() => setActiveGroup(i)} style={{
               flex: "0 0 auto", padding: "6px 14px",
@@ -1143,7 +1164,7 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
 // BRACKET SCREEN
 // ═══════════════════════════════════════════════════════════════════════════
 
-function BracketScreen({ bracketData, setMatchMap, players, onBack, grandFinalEnabled, useScoring }) {
+function BracketScreen({ bracketData, setMatchMap, players, onBack, grandFinalEnabled, useScoring, saveStatus, saveError }) {
   const { matchMap, winnersRounds, losersRounds, grandFinalId, prelimRound } = bracketData;
   const allWbRounds = prelimRound ? [prelimRound, ...winnersRounds] : winnersRounds;
   const scale = useViewportScale();
@@ -1205,7 +1226,11 @@ function BracketScreen({ bracketData, setMatchMap, players, onBack, grandFinalEn
           <div style={{ height: "100%", borderRadius: 2, background: GOLD, width: `${totalMatches ? (doneCount / totalMatches) * 100 : 0}%`, transition: "width 0.3s" }} />
         </div>
 
-        <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
+        <div style={{ marginTop: 6 }}>
+          <SaveBadge status={saveStatus} error={saveError} />
+        </div>
+
+        <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
           {[
             { key: "wb", label: "Winners", color: PURPLE },
             { key: "lb", label: "Losers", color: BLUE },
@@ -1361,6 +1386,9 @@ export default function App() {
     latestStateRef.current = { screen, players, grandFinal, useScoring, bestOf, bracketData, groupState };
   }, [screen, players, grandFinal, useScoring, bestOf, bracketData, groupState]);
 
+  const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
+  const [saveError, setSaveError] = useState(null);
+
   const flushSave = useCallback(async () => {
     const s = latestStateRef.current;
     if (!s || s.screen === "loading" || s.screen === "setup") return;
@@ -1371,30 +1399,31 @@ export default function App() {
       groupState: s.groupState,
       savedAt: new Date().toISOString(),
     };
+
+    setSaveStatus("saving");
     try {
-      const result = await window.storage.set(STORAGE_KEY, JSON.stringify(snapshot), false);
-      if (!result) {
-        console.error("Tournament: storage.set() returned no result — save may have failed.");
-      }
+      if (!window.storage) throw new Error("window.storage is not available");
+      const json = JSON.stringify(snapshot);
+      const result = await window.storage.set(STORAGE_KEY, json, false);
+      setSaveStatus("saved");
+      setSaveError(null);
     } catch (e) {
-      console.error("Tournament: failed to save tournament state.", e);
+      const msg = e && e.message ? e.message : String(e);
+      setSaveStatus("error");
+      setSaveError(msg);
+      console.error("Tournament save failed:", msg, e);
     }
   }, []);
 
-  // Persist whenever core state changes. Debounce is intentionally very
-  // short (just enough to coalesce rapid taps like repeated +/- presses)
-  // rather than relying on visibilitychange/pagehide to catch the save —
-  // browsers don't reliably let in-flight async work finish once a tab is
-  // actually closing, so the safest approach is to write almost immediately
-  // after every change instead of batching and hoping unload hooks fire.
+  // Persist whenever core state changes (short debounce to coalesce rapid taps)
   useEffect(() => {
     if (screen === "loading" || screen === "setup") return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => { flushSave(); }, 120);
+    saveTimer.current = setTimeout(() => { flushSave(); }, 150);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [screen, players, grandFinal, useScoring, bestOf, bracketData, groupState, flushSave]);
 
-  // Still attempt a flush on hide/close as a best-effort extra safety net.
+  // Best-effort flush on tab hide/close
   useEffect(() => {
     const onHide = () => { flushSave(); };
     document.addEventListener("visibilitychange", onHide);
@@ -1493,6 +1522,8 @@ export default function App() {
         setGroupState={setGroupState}
         onBack={handleBackToSetup}
         onAdvanceToBracket={handleAdvanceToBracket}
+        saveStatus={saveStatus}
+        saveError={saveError}
       />
     );
   }
@@ -1506,6 +1537,8 @@ export default function App() {
         onBack={handleBackToSetup}
         grandFinalEnabled={grandFinal}
         useScoring={useScoring}
+        saveStatus={saveStatus}
+        saveError={saveError}
       />
     );
   }
