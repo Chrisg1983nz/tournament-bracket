@@ -15,7 +15,61 @@ const MUTED  = "#6B7280";
 const FONT   = "'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, system-ui, sans-serif";
 const MONO   = "'SF Mono', 'Fira Code', 'Fira Mono', monospace";
 
-const STORAGE_KEY = "tournament:active-state";
+const STORAGE_KEY  = "tournament:active-state";
+const HISTORY_KEY  = "tournament:history";
+
+// ─── History helpers ──────────────────────────────────────────────────────────
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) { return []; }
+}
+
+function saveToHistory(entry) {
+  try {
+    const history = loadHistory();
+    // Avoid duplicates: if an entry with the same id already exists, replace it
+    const idx = history.findIndex(h => h.id === entry.id);
+    if (idx >= 0) history[idx] = entry;
+    else history.unshift(entry); // newest first
+    // Keep last 50 tournaments
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, 50)));
+  } catch (e) {}
+}
+
+function deleteFromHistory(id) {
+  try {
+    const history = loadHistory().filter(h => h.id !== id);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  } catch (e) {}
+}
+
+// Build a compact summary of a completed bracket for history storage.
+// We store results rather than the full matchMap to keep size small.
+function summariseBracket(matchMap, players, grandFinalEnabled, winnersRounds, losersRounds, grandFinalId) {
+  const wbFinalId = winnersRounds[winnersRounds.length - 1][0];
+  const champion  = grandFinalEnabled
+    ? matchMap[grandFinalId]?.winner
+    : matchMap[wbFinalId]?.winner;
+  if (!champion) return null; // not finished yet
+
+  // Build a compact results list: just settled non-bye matches
+  const results = Object.values(matchMap)
+    .filter(m => m.winner && !m.isBye)
+    .sort((a, b) => a.matchNum - b.matchNum)
+    .map(m => ({
+      num: m.matchNum,
+      p1: m.p1, p2: m.p2,
+      winner: m.winner,
+      p1Games: m.p1Games || 0, p2Games: m.p2Games || 0,
+      isPrelim: m.isPrelim, isLBPrelim: m.isLBPrelim, isGrandFinal: m.isGrandFinal,
+    }));
+
+  return { champion, players, results };
+}
 
 // ─── Responsive sizing ────────────────────────────────────────────────────────
 // Mobile-first sizes scaled up modestly on wider viewports so touch targets
@@ -815,8 +869,200 @@ function RoundCol({ title, matchIds, matchMap, onPickWinner, onChangeWinner, onS
 // SETUP SCREEN
 // ═══════════════════════════════════════════════════════════════════════════
 
-function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt, onResume, onDiscard, loadError }) {
+// ═══════════════════════════════════════════════════════════════════════════
+// HISTORY SCREEN
+// ═══════════════════════════════════════════════════════════════════════════
+
+function HistoryScreen({ onBack }) {
+  const [history, setHistory] = useState(() => loadHistory());
+  const [expanded, setExpanded] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const handleDelete = (id) => {
+    deleteFromHistory(id);
+    setHistory(loadHistory());
+    setConfirmDelete(null);
+    if (expanded === id) setExpanded(null);
+  };
+
+  const formatDate = (iso) => {
+    if (!iso) return "";
+    try {
+      const d = new Date(iso);
+      return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
+        + " · " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    } catch (e) { return iso; }
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: BG, color: TEXT, fontFamily: FONT }}>
+      {/* Header */}
+      <div style={{ background: CARD, borderBottom: `1px solid ${BORDER}`, padding: "14px 20px", position: "sticky", top: 0, zIndex: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button onClick={onBack} style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT, padding: "6px 12px", cursor: "pointer", fontSize: 14, fontFamily: "inherit", flexShrink: 0 }}>← Back</button>
+          <div>
+            <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: GOLD, letterSpacing: "0.06em", textTransform: "uppercase" }}>Tournament History</div>
+            <div style={{ fontSize: 17, fontWeight: 700 }}>{history.length} {history.length === 1 ? "tournament" : "tournaments"}</div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ padding: "20px 16px 40px" }}>
+        {history.length === 0 && (
+          <div style={{ textAlign: "center", padding: "60px 20px", color: MUTED }}>
+            <div style={{ fontSize: 40, marginBottom: 16 }}>🏆</div>
+            <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 8 }}>No past tournaments yet</div>
+            <div style={{ fontSize: 14, color: MUTED }}>Completed tournaments will appear here automatically once a champion is crowned.</div>
+          </div>
+        )}
+
+        {history.map((entry) => {
+          const isOpen = expanded === entry.id;
+          const isConfirm = confirmDelete === entry.id;
+
+          // Group results by round type for display
+          const wbResults  = (entry.results || []).filter(r => !r.isPrelim && !r.isLBPrelim && !r.isGrandFinal && !entry.lbMatchNums?.includes(r.num));
+          const gfResult   = (entry.results || []).find(r => r.isGrandFinal);
+          const allResults = entry.results || [];
+
+          return (
+            <div key={entry.id} style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, marginBottom: 12, overflow: "hidden" }}>
+              {/* Entry header */}
+              <div
+                onClick={() => setExpanded(isOpen ? null : entry.id)}
+                style={{ padding: "14px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {entry.name || formatDate(entry.completedAt)}
+                  </div>
+                  {entry.name && (
+                    <div style={{ fontSize: 12, color: MUTED, marginBottom: 4 }}>{formatDate(entry.completedAt)}</div>
+                  )}
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                    <span style={{ fontSize: 14 }}>🏆</span>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: GOLD, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.champion}</span>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 12, background: `${PURPLE}22`, color: PURPLE, borderRadius: 6, padding: "2px 8px", fontWeight: 600 }}>
+                      {entry.playerCount} players
+                    </span>
+                    {entry.format && (
+                      <span style={{ fontSize: 12, background: `${BLUE}22`, color: BLUE, borderRadius: 6, padding: "2px 8px", fontWeight: 600 }}>
+                        {entry.format}
+                      </span>
+                    )}
+                    {entry.bestOf && (
+                      <span style={{ fontSize: 12, background: `${MUTED}22`, color: MUTED, borderRadius: 6, padding: "2px 8px", fontWeight: 600 }}>
+                        Best of {entry.bestOf}
+                      </span>
+                    )}
+                    {entry.hasGroups && (
+                      <span style={{ fontSize: 12, background: `${GREEN}22`, color: GREEN, borderRadius: 6, padding: "2px 8px", fontWeight: 600 }}>
+                        Groups + Bracket
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div style={{ fontSize: 20, color: MUTED, flexShrink: 0 }}>{isOpen ? "▾" : "›"}</div>
+              </div>
+
+              {/* Expanded detail */}
+              {isOpen && (
+                <div style={{ borderTop: `1px solid ${BORDER}`, padding: "14px 16px" }}>
+
+                  {/* Players */}
+                  <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Players</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 18 }}>
+                    {(entry.players || []).map((p) => (
+                      <span key={p} style={{
+                        fontSize: 13, padding: "4px 10px", borderRadius: 8,
+                        background: p === entry.champion ? `${GOLD}22` : CARD2,
+                        border: `1px solid ${p === entry.champion ? GOLD + "66" : BORDER}`,
+                        color: p === entry.champion ? GOLD : TEXT,
+                        fontWeight: p === entry.champion ? 700 : 400,
+                      }}>
+                        {p === entry.champion ? "🏆 " : ""}{p}
+                      </span>
+                    ))}
+                  </div>
+
+                  {/* Results */}
+                  {allResults.length > 0 && (
+                    <>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Results</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {allResults.map((r) => {
+                          const label = r.isGrandFinal ? "Grand Final"
+                            : r.isPrelim ? "WB Prelim"
+                            : r.isLBPrelim ? "LB Prelim"
+                            : `Match ${r.num}`;
+                          const accentColor = r.isGrandFinal ? GOLD : r.isPrelim || r.isLBPrelim ? BLUE : PURPLE;
+                          const scored = r.p1Games > 0 || r.p2Games > 0;
+                          return (
+                            <div key={r.num} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: CARD2, borderRadius: 10, borderLeft: `3px solid ${accentColor}` }}>
+                              <div style={{ fontSize: 11, color: accentColor, fontWeight: 600, minWidth: 80, flexShrink: 0 }}>{label}</div>
+                              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                                <span style={{ fontSize: 14, fontWeight: r.winner === r.p1 ? 700 : 400, color: r.winner === r.p1 ? TEXT : MUTED, textDecoration: r.winner !== r.p1 ? "line-through" : "none" }}>{r.p1}</span>
+                                {scored && <span style={{ fontSize: 12, color: MUTED, fontFamily: MONO }}>{r.p1Games}–{r.p2Games}</span>}
+                                <span style={{ fontSize: 12, color: MUTED }}>vs</span>
+                                <span style={{ fontSize: 14, fontWeight: r.winner === r.p2 ? 700 : 400, color: r.winner === r.p2 ? TEXT : MUTED, textDecoration: r.winner !== r.p2 ? "line-through" : "none" }}>{r.p2}</span>
+                              </div>
+                              <span style={{ fontSize: 12, color: accentColor, flexShrink: 0 }}>▶ {r.winner}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+
+                  {/* Group stage summary */}
+                  {entry.groupSummary && (
+                    <>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, textTransform: "uppercase", letterSpacing: "0.06em", marginTop: 18, marginBottom: 10 }}>Group Stage</div>
+                      {entry.groupSummary.map((g, gi) => (
+                        <div key={gi} style={{ marginBottom: 10 }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: PURPLE, marginBottom: 6 }}>Group {String.fromCharCode(65 + gi)}</div>
+                          {g.standings.map((s, si) => (
+                            <div key={s.player} style={{ display: "flex", gap: 10, padding: "5px 10px", background: si < g.advance ? `${GREEN}11` : "transparent", borderRadius: 6, fontSize: 13 }}>
+                              <span style={{ color: si < g.advance ? GREEN : MUTED, fontWeight: 700, minWidth: 16 }}>{si + 1}</span>
+                              <span style={{ flex: 1, fontWeight: si < g.advance ? 600 : 400 }}>{s.player}</span>
+                              <span style={{ color: MUTED, fontFamily: MONO, fontSize: 12 }}>{s.wins}–{s.losses}</span>
+                              <span style={{ color: MUTED, fontFamily: MONO, fontSize: 12 }}>{s.ppg.toFixed(2)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </>
+                  )}
+
+                  {/* Delete */}
+                  <div style={{ marginTop: 18, borderTop: `1px solid ${BORDER}`, paddingTop: 14 }}>
+                    {!isConfirm ? (
+                      <button onClick={() => setConfirmDelete(entry.id)} style={{ background: "transparent", border: `1px solid ${BORDER}`, borderRadius: 8, color: MUTED, fontSize: 13, padding: "6px 14px", cursor: "pointer", fontFamily: "inherit" }}>
+                        Delete this record
+                      </button>
+                    ) : (
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <span style={{ fontSize: 13, color: MUTED }}>Delete permanently?</span>
+                        <button onClick={() => handleDelete(entry.id)} style={{ background: RED, border: "none", borderRadius: 8, color: "#fff", fontSize: 13, padding: "6px 14px", cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>Delete</button>
+                        <button onClick={() => setConfirmDelete(null)} style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT, fontSize: 13, padding: "6px 14px", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt, onResume, onDiscard, loadError, onHistory }) {
   const [mode, setMode] = useState("bracket"); // "bracket" | "groups"
+  const [tournamentName, setTournamentName] = useState("");
   const [count, setCount] = useState(8);
   const [names, setNames] = useState(Array.from({ length: 8 }, (_, i) => `Player ${i + 1}`));
   const [grandFinalEnabled, setGrandFinalEnabled] = useState(true);
@@ -857,9 +1103,14 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
   return (
     <div style={{ minHeight: "100vh", background: BG, color: TEXT, fontFamily: FONT, paddingBottom: 160 }}>
       <div style={{ background: CARD, borderBottom: `1px solid ${BORDER}`, padding: "20px 20px 14px", position: "sticky", top: 0, zIndex: 10 }}>
-        <div style={{ maxWidth: contentMaxWidth, margin: "0 auto" }}>
-          <div style={{ fontSize: 12, fontFamily: MONO, color: GOLD, letterSpacing: "0.2em", marginBottom: 4 }}>TOURNAMENT BUILDER</div>
-          <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-0.5px" }}>New Tournament</div>
+        <div style={{ maxWidth: contentMaxWidth, margin: "0 auto", display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontSize: 12, fontFamily: MONO, color: GOLD, letterSpacing: "0.2em", marginBottom: 4 }}>TOURNAMENT BUILDER</div>
+            <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-0.5px" }}>New Tournament</div>
+          </div>
+          <button onClick={onHistory} style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10, color: TEXT, padding: "8px 14px", cursor: "pointer", fontSize: 13, fontFamily: "inherit", fontWeight: 600, flexShrink: 0, marginBottom: 2 }}>
+            History
+          </button>
         </div>
       </div>
 
@@ -889,6 +1140,18 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
           <div style={{ fontSize: 12, color: MUTED, fontFamily: MONO }}>No saved tournament found on this device yet.</div>
         </div>
       )}
+
+      {/* Tournament name */}
+      <div style={{ padding: "20px 20px 0" }}>
+        <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 10, textTransform: "uppercase" }}>Tournament Name</div>
+        <input
+          value={tournamentName}
+          onChange={e => setTournamentName(e.target.value)}
+          placeholder={`e.g. Summer Smash ${new Date().getFullYear()}`}
+          style={{ width: "100%", background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, padding: "12px 16px", color: TEXT, fontSize: 16, outline: "none", fontFamily: "inherit", boxSizing: "border-box" }}
+        />
+        <div style={{ fontSize: 12, color: MUTED, marginTop: 6 }}>Optional — if left blank, the date will be used as the title.</div>
+      </div>
 
       {/* Mode toggle */}
       <div style={{ padding: "20px 20px 0" }}>
@@ -1041,9 +1304,9 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
           onClick={() => {
             const cleanNames = names.map(n => n.trim() || null).filter(Boolean);
             if (mode === "bracket") {
-              onGenerateBracket(cleanNames, grandFinalEnabled, useScoring, bestOf);
+              onGenerateBracket(cleanNames, grandFinalEnabled, useScoring, bestOf, tournamentName.trim());
             } else {
-              onGenerateGroups(cleanNames, effectiveGroupCount, advancePerGroup, useScoring, bestOf, grandFinalEnabled);
+              onGenerateGroups(cleanNames, effectiveGroupCount, advancePerGroup, useScoring, bestOf, grandFinalEnabled, tournamentName.trim());
             }
           }}
           style={{ width: "100%", padding: scale.tier === "desktop" ? "18px" : "16px", background: GOLD, border: "none", borderRadius: 14, color: "#0D0F14", fontSize: scale.tier === "desktop" ? 20 : 17, fontWeight: 700, cursor: "pointer", letterSpacing: "0.02em", fontFamily: "inherit" }}
@@ -1411,6 +1674,7 @@ export default function App() {
   const [grandFinal, setGrandFinal] = useState(true);
   const [useScoring, setUseScoring] = useState(true);
   const [bestOf, setBestOf] = useState(3);
+  const [tournamentName, setTournamentName] = useState("");
 
   const [bracketData, setBracketData] = useState(null); // { matchMap, winnersRounds, losersRounds, grandFinalId, prelimRound }
   const [groupState, setGroupStateRaw] = useState(null); // { groups, matchesByGroup, advancePerGroup, useScoring, bestOf }
@@ -1444,18 +1708,20 @@ export default function App() {
   // Keep a ref of the latest persistable state so we can flush it
   // synchronously on tab close/hide, not just on the debounce timer.
   useEffect(() => {
-    latestStateRef.current = { screen, players, grandFinal, useScoring, bestOf, bracketData, groupState };
-  }, [screen, players, grandFinal, useScoring, bestOf, bracketData, groupState]);
+    latestStateRef.current = { screen, players, grandFinal, useScoring, bestOf, tournamentName, bracketData, groupState };
+  }, [screen, players, grandFinal, useScoring, bestOf, tournamentName, bracketData, groupState]);
 
   const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
   const [saveError, setSaveError] = useState(null);
+  // Stable ID for the current tournament so we can upsert into history
+  const tournamentIdRef = useRef(null);
 
   const flushSave = useCallback(() => {
     const s = latestStateRef.current;
     if (!s || s.screen === "loading" || s.screen === "setup") return;
     const snapshot = {
       screen: s.screen, players: s.players, grandFinal: s.grandFinal,
-      useScoring: s.useScoring, bestOf: s.bestOf,
+      useScoring: s.useScoring, bestOf: s.bestOf, tournamentName: s.tournamentName || "",
       bracketData: s.bracketData ? { ...s.bracketData } : null,
       groupState: s.groupState,
       savedAt: new Date().toISOString(),
@@ -1470,6 +1736,60 @@ export default function App() {
       setSaveStatus("error");
       setSaveError(msg);
     }
+
+    // Auto-save to history when the bracket has a champion
+    if (s.screen === "bracket" && s.bracketData) {
+      const { matchMap, winnersRounds, losersRounds, grandFinalId } = s.bracketData;
+      const summary = summariseBracket(matchMap, s.players, s.grandFinal, winnersRounds, losersRounds, grandFinalId);
+      if (summary && summary.champion) {
+        if (!tournamentIdRef.current) {
+          tournamentIdRef.current = `t_${Date.now()}`;
+        }
+        const entry = {
+          id: tournamentIdRef.current,
+          name: s.tournamentName || "",
+          champion: summary.champion,
+          players: summary.players,
+          results: summary.results,
+          playerCount: (summary.players || []).length,
+          format: "Double Elimination",
+          bestOf: s.bestOf,
+          hasGroups: false,
+          completedAt: new Date().toISOString(),
+        };
+        saveToHistory(entry);
+      }
+    }
+
+    // Auto-save groups+bracket to history when bracket is complete
+    if (s.screen === "bracket" && s.bracketData && s.groupState) {
+      const { matchMap, winnersRounds, losersRounds, grandFinalId } = s.bracketData;
+      const summary = summariseBracket(matchMap, s.players, s.grandFinal, winnersRounds, losersRounds, grandFinalId);
+      if (summary && summary.champion) {
+        if (!tournamentIdRef.current) {
+          tournamentIdRef.current = `t_${Date.now()}`;
+        }
+        const { groups, matchesByGroup, advancePerGroup } = s.groupState;
+        const groupSummary = groups.map((g, i) => ({
+          standings: computeStandings(g, matchesByGroup[i] || []),
+          advance: advancePerGroup,
+        }));
+        const entry = {
+          id: tournamentIdRef.current,
+          name: s.tournamentName || "",
+          champion: summary.champion,
+          players: s.groupState ? groups.flat() : summary.players,
+          results: summary.results,
+          playerCount: groups.flat().length,
+          format: "Double Elimination",
+          bestOf: s.bestOf,
+          hasGroups: true,
+          groupSummary,
+          completedAt: new Date().toISOString(),
+        };
+        saveToHistory(entry);
+      }
+    }
   }, []);
 
   // Persist whenever core state changes (short debounce to coalesce rapid taps)
@@ -1478,7 +1798,7 @@ export default function App() {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => { flushSave(); }, 150);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, [screen, players, grandFinal, useScoring, bestOf, bracketData, groupState, flushSave]);
+  }, [screen, players, grandFinal, useScoring, bestOf, tournamentName, bracketData, groupState, flushSave]);
 
   // Best-effort flush on tab hide/close
   useEffect(() => {
@@ -1503,18 +1823,21 @@ export default function App() {
     });
   }, []);
 
-  const handleGenerateBracket = (names, gf, scoring, bo) => {
+  const handleGenerateBracket = (names, gf, scoring, bo, name) => {
+    tournamentIdRef.current = `t_${Date.now()}`;
     const data = buildBracket(names, { shuffle: true, bestOf: bo });
     setPlayers(names);
     setGrandFinal(gf);
     setUseScoring(scoring);
     setBestOf(bo);
+    setTournamentName(name || "");
     setBracketData(data);
     setGroupStateRaw(null);
     setScreen("bracket");
   };
 
-  const handleGenerateGroups = (names, groupCount, advancePerGroup, scoring, bo, gf) => {
+  const handleGenerateGroups = (names, groupCount, advancePerGroup, scoring, bo, gf, name) => {
+    tournamentIdRef.current = `t_${Date.now()}`;
     const groups = distributeGroups(names, groupCount);
     const matchesByGroup = {};
     groups.forEach((g, i) => { matchesByGroup[i] = buildRoundRobinMatches(g, bo); });
@@ -1522,6 +1845,7 @@ export default function App() {
     setGrandFinal(gf);
     setUseScoring(scoring);
     setBestOf(bo);
+    setTournamentName(name || "");
     setGroupStateRaw({ groups, matchesByGroup, advancePerGroup, useScoring: scoring, bestOf: bo, grandFinal: gf });
     setBracketData(null);
     setScreen("groups");
@@ -1540,6 +1864,7 @@ export default function App() {
     setGrandFinal(savedSnapshot.grandFinal ?? true);
     setUseScoring(savedSnapshot.useScoring ?? true);
     setBestOf(savedSnapshot.bestOf ?? 3);
+    setTournamentName(savedSnapshot.tournamentName || "");
     setBracketData(savedSnapshot.bracketData || null);
     setGroupStateRaw(savedSnapshot.groupState || null);
     setScreen(savedSnapshot.screen && savedSnapshot.screen !== "setup" && savedSnapshot.screen !== "loading" ? savedSnapshot.screen : "setup");
@@ -1558,6 +1883,10 @@ export default function App() {
     return <div style={{ minHeight: "100vh", background: BG, color: MUTED, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15 }}>Loading…</div>;
   }
 
+  if (screen === "history") {
+    return <HistoryScreen onBack={handleBackToSetup} />;
+  }
+
   if (screen === "setup") {
     return (
       <SetupScreen
@@ -1568,6 +1897,7 @@ export default function App() {
         onResume={handleResume}
         onDiscard={handleDiscard}
         loadError={loadError}
+        onHistory={() => setScreen("history")}
       />
     );
   }
