@@ -540,36 +540,53 @@ function computeStandings(group, matches) {
 // ─── Tooltip ──────────────────────────────────────────────────────────────────
 function Tooltip({ label, children }) {
   const [visible, setVisible] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const triggerRef = useRef(null);
+
+  const show = () => {
+    if (triggerRef.current) {
+      const r = triggerRef.current.getBoundingClientRect();
+      setPos({ top: r.top + window.scrollY, left: r.left + r.width / 2 });
+    }
+    setVisible(true);
+  };
+
   return (
-    <div
-      style={{ position: "relative", display: "inline-flex", alignItems: "center", cursor: "default" }}
-      onMouseEnter={() => setVisible(true)}
-      onMouseLeave={() => setVisible(false)}
-      onClick={() => setVisible(v => !v)}
-    >
-      {children}
+    <>
+      <div
+        ref={triggerRef}
+        style={{ display: "inline-flex", alignItems: "center", cursor: "help" }}
+        onMouseEnter={show}
+        onMouseLeave={() => setVisible(false)}
+        onClick={(e) => { e.stopPropagation(); visible ? setVisible(false) : show(); }}
+      >
+        {children}
+      </div>
       {visible && (
         <div style={{
-          position: "absolute", bottom: "calc(100% + 8px)", left: "50%",
-          transform: "translateX(-50%)",
-          background: "#2E3340", border: `1px solid ${BORDER}`,
-          borderRadius: 8, padding: "8px 12px",
-          fontSize: 12, color: TEXT, fontFamily: FONT,
-          whiteSpace: "pre-line", lineHeight: 1.5,
-          width: 220, zIndex: 100,
-          boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
+          position: "fixed",
+          top: pos.top - 8,
+          left: pos.left,
+          transform: "translate(-50%, -100%)",
+          background: "#1A1D24",
+          border: `1px solid ${BORDER}`,
+          borderRadius: 10, padding: "10px 14px",
+          fontSize: 13, color: TEXT, fontFamily: FONT,
+          whiteSpace: "pre-line", lineHeight: 1.6,
+          width: 240, zIndex: 9999,
+          boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
           pointerEvents: "none",
         }}>
           {label}
           <div style={{
             position: "absolute", top: "100%", left: "50%",
             transform: "translateX(-50%)",
-            border: "5px solid transparent",
-            borderTopColor: "#2E3340",
+            border: "6px solid transparent",
+            borderTopColor: "#1A1D24",
           }} />
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -1135,7 +1152,7 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
         <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 10, textTransform: "uppercase" }}>
           Group {String.fromCharCode(65 + activeGroup)} Standings
         </div>
-        <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 12, overflow: "hidden", marginBottom: 24 }}>
+        <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 12, overflow: "visible", marginBottom: 24 }}>
           <div style={{ display: "grid", gridTemplateColumns: "28px 1fr 52px 60px 64px", padding: "8px 14px", fontSize: 11, color: MUTED, fontFamily: FONT, fontWeight: 600, borderBottom: `1px solid ${BORDER}`, letterSpacing: "0.03em" }}>
             <div>#</div>
             <div>Player</div>
