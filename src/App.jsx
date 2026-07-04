@@ -1428,46 +1428,18 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
             <div onClick={() => setPlateEnabled(v => !v)} style={{
               display: "flex", alignItems: "center", justifyContent: "space-between",
               background: CARD2, border: `1px solid ${plateEnabled ? "#FB923C66" : BORDER}`,
-              borderRadius: 12, padding: "12px 14px", cursor: "pointer", marginBottom: plateEnabled ? 12 : 0,
+              borderRadius: 12, padding: "12px 14px", cursor: "pointer",
             }}>
               <div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>Enable Plate</div>
                 <div style={{ fontSize: 12, color: MUTED, marginTop: 3 }}>
-                  {mode === "groups" ? "Players will be selected after groups complete" : "Single-elim bracket running alongside the main tournament"}
+                  Single-elim bracket running alongside the main tournament — add players once the tournament is underway.
                 </div>
               </div>
               <div style={{ width: 44, height: 26, borderRadius: 13, background: plateEnabled ? "#FB923C" : BORDER, position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
                 <div style={{ position: "absolute", top: 4, left: plateEnabled ? 22 : 4, width: 18, height: 18, borderRadius: 9, background: "#fff", transition: "left 0.2s" }} />
               </div>
             </div>
-
-            {/* For knockout-only: pick plate players now */}
-            {plateEnabled && mode === "bracket" && (
-              <div style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, padding: "12px 14px" }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: "#FB923C", marginBottom: 10 }}>Select Plate Players — tap to include</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
-                  {cleanNames.map(p => {
-                    const included = platePlayers.includes(p);
-                    return (
-                      <button key={p} onClick={() => setPlatePlayers(prev => included ? prev.filter(x => x !== p) : [...prev, p])} style={{
-                        fontSize: 13, padding: "6px 12px", borderRadius: 8, cursor: "pointer",
-                        background: included ? "#FB923C22" : BG,
-                        border: `1px solid ${included ? "#FB923C" : BORDER}`,
-                        color: included ? "#FB923C" : MUTED,
-                        fontWeight: included ? 600 : 400, fontFamily: "inherit",
-                      }}>{p}</button>
-                    );
-                  })}
-                </div>
-                <div style={{ fontSize: 12, color: MUTED }}>{platePlayers.length} selected · needs at least 2 to generate a bracket</div>
-              </div>
-            )}
-
-            {plateEnabled && mode === "groups" && (
-              <div style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, padding: "12px 14px" }}>
-                <div style={{ fontSize: 12, color: MUTED }}>You will choose plate players after all group matches are complete.</div>
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -1478,7 +1450,7 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
             onClick={() => {
               const names2 = cleanNames;
               if (mode === "bracket") {
-                onGenerateBracket(names2, grandFinalEnabled, useScoring, bestOf, tournamentName.trim(), elimType, plateEnabled ? platePlayers : []);
+                onGenerateBracket(names2, grandFinalEnabled, useScoring, bestOf, tournamentName.trim(), elimType, plateEnabled);
               } else {
                 onGenerateGroups(names2, effectiveGroupCount, advancePerGroup, useScoring, bestOf, grandFinalEnabled, tournamentName.trim(), plateEnabled);
               }
@@ -1565,7 +1537,7 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
   };
 
   const doAdvance = () => {
-    onAdvanceToBracket({ qualifiers, plateEnabled: groupPlateEnabled, platePlayers });
+    onAdvanceToBracket({ qualifiers, plateEnabled: groupPlateEnabled });
   };
 
   return (
@@ -1663,22 +1635,10 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
             </div>
 
             {groupPlateEnabled && (
-              <>
-                <div style={{ fontSize: 12, fontWeight: 600, color: "#FB923C", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Plate Players — tap to include</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
-                  {allPlayers.map(p => {
-                    const inc = platePlayers.includes(p);
-                    return (
-                      <button key={p} onClick={() => setPlatePlayers(prev => inc ? prev.filter(x => x !== p) : [...prev, p])} style={{
-                        fontSize: 13, padding: "6px 12px", borderRadius: 8, cursor: "pointer",
-                        background: inc ? "#FB923C22" : CARD2, border: `1px solid ${inc ? "#FB923C" : BORDER}`,
-                        color: inc ? "#FB923C" : MUTED, fontWeight: inc ? 600 : 400, fontFamily: "inherit",
-                      }}>{p}</button>
-                    );
-                  })}
-                </div>
-                <div style={{ fontSize: 12, color: MUTED, marginBottom: 20 }}>{platePlayers.length} selected</div>
-              </>
+              <div style={{ padding: "12px 14px", background: `#FB923C11`, border: `1px solid #FB923C44`, borderRadius: 12, marginBottom: 16 }}>
+                <div style={{ fontSize: 13, color: "#FB923C", fontWeight: 600 }}>🥉 Plate enabled</div>
+                <div style={{ fontSize: 12, color: MUTED, marginTop: 4 }}>You can add plate players from the bracket screen once the tournament is underway.</div>
+              </div>
             )}
 
             <div style={{ display: "flex", gap: 10 }}>
@@ -1696,10 +1656,37 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
 // BRACKET SCREEN
 // ═══════════════════════════════════════════════════════════════════════════
 
-function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, players, onBack, grandFinalEnabled, useScoring, isSingleElim, saveStatus, saveError }) {
+function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, plateEnabled, onBuildPlate, players, onBack, grandFinalEnabled, useScoring, isSingleElim, saveStatus, saveError }) {
   const { matchMap, winnersRounds, losersRounds, grandFinalId, prelimRound } = bracketData;
   const allWbRounds = prelimRound ? [prelimRound, ...winnersRounds] : winnersRounds;
   const scale = useViewportScale();
+
+  // Plate management modal state
+  const [showPlateModal, setShowPlateModal] = useState(false);
+  const [plateInputs, setPlateInputs] = useState(() =>
+    plateData ? (plateData.rounds || []).flat().map(id => plateData.matchMap[id]).filter(m => m.p1 && m.p1 !== "BYE").map(m => m.p1) : ["", ""]
+  );
+
+  const openPlateModal = () => {
+    // Pre-fill from existing plate if any, else start with 2 empty fields
+    if (plateData) {
+      const existing = Object.values(plateData.matchMap).filter(m => !m.isBye && m.p1 && m.p1 !== "BYE").map(m => [m.p1, m.p2]).flat().filter((v, i, a) => v && v !== "BYE" && a.indexOf(v) === i);
+      setPlateInputs(existing.length >= 2 ? existing : ["", ""]);
+    } else {
+      setPlateInputs(["", ""]);
+    }
+    setShowPlateModal(true);
+  };
+
+  const addPlateSlot = () => setPlateInputs(p => [...p, ""]);
+  const removePlateSlot = (i) => setPlateInputs(p => p.filter((_, idx) => idx !== i));
+
+  const generatePlate = () => {
+    const valid = plateInputs.map(n => n.trim()).filter(Boolean);
+    if (valid.length < 2) return;
+    onBuildPlate(valid);
+    setShowPlateModal(false);
+  };
 
   const handlePick = useCallback((matchId, winner) => {
     setMatchMap(prev => recordWinner(prev, matchId, winner));
@@ -1767,7 +1754,20 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
         <div style={{ marginTop: 10, height: 3, background: BORDER, borderRadius: 2 }}>
           <div style={{ height: "100%", borderRadius: 2, background: GOLD, width: `${totalMatches ? (doneCount / totalMatches) * 100 : 0}%`, transition: "width 0.3s" }} />
         </div>
-        <div style={{ marginTop: 6 }}><SaveBadge status={saveStatus} error={saveError} /></div>
+        <div style={{ marginTop: 6, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <SaveBadge status={saveStatus} error={saveError} />
+          {plateEnabled && (
+            <button onClick={openPlateModal} style={{
+              background: plateData ? "#FB923C22" : CARD2,
+              border: `1px solid ${plateData ? "#FB923C" : BORDER}`,
+              borderRadius: 8, color: plateData ? "#FB923C" : MUTED,
+              fontSize: 12, fontWeight: 600, padding: "5px 12px",
+              cursor: "pointer", fontFamily: "inherit",
+            }}>
+              🥉 {plateData ? "Manage Plate" : "Set Up Plate"}
+            </button>
+          )}
+        </div>
         <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
           {tabs.map(({ key, label, color }) => (
             <button key={key} onClick={() => setActiveTab(key)} style={{
@@ -1780,6 +1780,53 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
           ))}
         </div>
       </div>
+
+      {/* Plate management modal */}
+      {showPlateModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 200, display: "flex", alignItems: "flex-end" }}>
+          <div style={{ background: CARD, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: "24px 20px 40px", width: "100%", maxHeight: "85vh", overflowY: "auto", boxSizing: "border-box" }}>
+            <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>🥉 Plate Tournament</div>
+            <div style={{ fontSize: 14, color: MUTED, marginBottom: 20 }}>
+              Enter the names of players in the plate. Add as many as you need — the bracket will be generated automatically.
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+              {plateInputs.map((val, i) => (
+                <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <div style={{ width: 26, height: 26, borderRadius: 6, background: CARD2, border: `1px solid ${BORDER}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: MUTED, flexShrink: 0, fontFamily: MONO }}>{i + 1}</div>
+                  <input
+                    value={val}
+                    onChange={e => setPlateInputs(prev => { const n = [...prev]; n[i] = e.target.value; return n; })}
+                    placeholder={`Player ${i + 1}`}
+                    style={{ flex: 1, background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "10px 14px", color: TEXT, fontSize: 15, outline: "none", fontFamily: "inherit" }}
+                  />
+                  {plateInputs.length > 2 && (
+                    <button onClick={() => removePlateSlot(i)} style={{ width: 32, height: 32, borderRadius: 8, border: `1px solid ${BORDER}`, background: CARD2, color: MUTED, fontSize: 16, cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <button onClick={addPlateSlot} style={{ width: "100%", padding: "10px", background: "transparent", border: `1px dashed ${BORDER}`, borderRadius: 10, color: MUTED, fontSize: 14, cursor: "pointer", fontFamily: "inherit", marginBottom: 20 }}>
+              + Add Player
+            </button>
+
+            <div style={{ fontSize: 12, color: MUTED, marginBottom: 16 }}>
+              {plateInputs.filter(n => n.trim()).length} players · {plateData ? "This will replace the existing plate bracket." : ""}
+            </div>
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setShowPlateModal(false)} style={{ flex: 1, padding: "14px", background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, color: TEXT, fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+              <button
+                onClick={generatePlate}
+                disabled={plateInputs.filter(n => n.trim()).length < 2}
+                style={{ flex: 2, padding: "14px", background: plateInputs.filter(n => n.trim()).length >= 2 ? "#FB923C" : CARD2, border: "none", borderRadius: 12, color: plateInputs.filter(n => n.trim()).length >= 2 ? "#0D0F14" : MUTED, fontSize: 15, fontWeight: 700, cursor: plateInputs.filter(n => n.trim()).length >= 2 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+                {plateData ? "Regenerate Plate →" : "Generate Plate →"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ overflowX: "auto", padding: "20px 16px 120px" }}>
 
@@ -1950,7 +1997,7 @@ export default function App() {
 
   // ── Keep ref current ───────────────────────────────────────────────────
   useEffect(() => {
-    latestStateRef.current = { screen, players, grandFinal, useScoring, bestOf, tournamentName, isSingleElim, bracketData, plateData, groupState };
+    latestStateRef.current = { screen, players, grandFinal, useScoring, bestOf, tournamentName, isSingleElim, plateEnabled, bracketData, plateData, groupState };
   }, [screen, players, grandFinal, useScoring, bestOf, tournamentName, isSingleElim, bracketData, plateData, groupState]);
 
   // ── Save ───────────────────────────────────────────────────────────────
@@ -1962,6 +2009,7 @@ export default function App() {
       useScoring: s.useScoring, bestOf: s.bestOf,
       tournamentName: s.tournamentName || "",
       isSingleElim: s.isSingleElim,
+      plateEnabled: s.plateEnabled,
       bracketData: s.bracketData ? { ...s.bracketData } : null,
       plateData: s.plateData ? { ...s.plateData } : null,
       groupState: s.groupState,
@@ -2039,26 +2087,28 @@ export default function App() {
   }, []);
 
   // ── Generate handlers ──────────────────────────────────────────────────
-  const handleGenerateBracket = (names, gf, scoring, bo, name, elimType, platePl) => {
+  const [plateEnabled, setPlateEnabled] = useState(false); // whether plate is enabled for current tournament
+
+  const handleGenerateBracket = (names, gf, scoring, bo, name, elimType, platEn) => {
     tournamentIdRef.current = `t_${Date.now()}`;
     const single = elimType === "single";
     const data = single
       ? (() => { const d = buildSingleElim(names, { shuffle: true, bestOf: bo }); return { ...d, winnersRounds: d.rounds, losersRounds: [], grandFinalId: d.finalId, prelimRound: null }; })()
       : buildBracket(names, { shuffle: true, bestOf: bo });
-    const plate = platePl && platePl.length > 1 ? buildSingleElim(platePl, { shuffle: false, bestOf: bo }) : null;
     setPlayers(names);
     setGrandFinal(gf);
     setUseScoring(scoring);
     setBestOf(bo);
     setTournamentName(name || "");
     setIsSingleElim(single);
+    setPlateEnabled(!!platEn);
     setBracketData(data);
-    setPlateData(plate);
+    setPlateData(null); // plate built later from bracket screen
     setGroupStateRaw(null);
     setScreen("bracket");
   };
 
-  const handleGenerateGroups = (names, groupCount, advancePerGroup, scoring, bo, gf, name, plateEn) => {
+  const handleGenerateGroups = (names, groupCount, advancePerGroup, scoring, bo, gf, name, platEn) => {
     tournamentIdRef.current = `t_${Date.now()}`;
     const groups = distributeGroups(names, groupCount);
     const matchesByGroup = {};
@@ -2069,22 +2119,21 @@ export default function App() {
     setBestOf(bo);
     setTournamentName(name || "");
     setIsSingleElim(false);
-    setGroupStateRaw({ groups, matchesByGroup, advancePerGroup, useScoring: scoring, bestOf: bo, grandFinal: gf, plateEnabled: plateEn });
+    setPlateEnabled(!!platEn);
+    setGroupStateRaw({ groups, matchesByGroup, advancePerGroup, useScoring: scoring, bestOf: bo, grandFinal: gf, plateEnabled: !!platEn });
     setBracketData(null);
     setPlateData(null);
     setScreen("groups");
   };
 
-  const handleAdvanceToBracket = ({ qualifiers, plateEnabled, platePlayers }) => {
+  const handleAdvanceToBracket = ({ qualifiers, plateEnabled: platEn }) => {
     const wrap = (d) => ({ ...d, winnersRounds: d.rounds, losersRounds: [], grandFinalId: d.finalId, prelimRound: null });
     const wb = wrap(buildSingleElim(qualifiers, { shuffle: true, bestOf }));
-    const plate = plateEnabled && platePlayers && platePlayers.length > 1
-      ? buildSingleElim(platePlayers, { shuffle: false, bestOf })
-      : null;
     setPlayers(qualifiers);
     setIsSingleElim(true);
+    setPlateEnabled(!!platEn);
     setBracketData(wb);
-    setPlateData(plate);
+    setPlateData(null); // plate built later from bracket screen
     setScreen("bracket");
   };
 
@@ -2096,6 +2145,7 @@ export default function App() {
     setBestOf(savedSnapshot.bestOf ?? 3);
     setTournamentName(savedSnapshot.tournamentName || "");
     setIsSingleElim(savedSnapshot.isSingleElim ?? false);
+    setPlateEnabled(savedSnapshot.plateEnabled ?? false);
     setBracketData(savedSnapshot.bracketData || null);
     setPlateData(savedSnapshot.plateData || null);
     setGroupStateRaw(savedSnapshot.groupState || null);
@@ -2152,6 +2202,11 @@ export default function App() {
         setMatchMap={setMatchMap}
         plateData={plateData}
         setPlateMatchMap={setPlateMatchMap}
+        plateEnabled={plateEnabled}
+        onBuildPlate={(players) => {
+          const data = buildSingleElim(players, { shuffle: false, bestOf });
+          setPlateData(data);
+        }}
         players={players}
         onBack={handleBackToSetup}
         grandFinalEnabled={grandFinal}
