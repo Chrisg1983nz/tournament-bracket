@@ -1157,12 +1157,18 @@ function HistoryScreen({ onBack }) {
   );
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SETUP SCREEN
+// ═══════════════════════════════════════════════════════════════════════════
+
 function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt, onResume, onDiscard, loadError, onHistory }) {
   const [mode, setMode] = useState("bracket"); // "bracket" | "groups"
   const [tournamentName, setTournamentName] = useState("");
   const [count, setCount] = useState(8);
-  const [names, setNames] = useState(Array.from({ length: 8 }, (_, i) => `Player ${i + 1}`));
+  const [names, setNames] = useState(Array.from({ length: 8 }, () => ""));
   const [grandFinalEnabled, setGrandFinalEnabled] = useState(true);
+  const [elimType, setElimType] = useState("double"); // "single" | "double"
   const [bestOf, setBestOf] = useState(3);
   const [useScoring, setUseScoring] = useState(true);
 
@@ -1171,20 +1177,22 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
   const [advancePerGroup, setAdvancePerGroup] = useState(2);
   const [groupsTouched, setGroupsTouched] = useState(false);
 
+  // Plate settings (shared across both modes)
+  const [plateEnabled, setPlateEnabled] = useState(false);
+  const [platePlayers, setPlatePlayers] = useState([]);
+
   const updateCount = (n) => {
     const c = Math.max(2, Math.min(64, n));
     setCount(c);
     setNames(prev => {
       const next = [...prev];
-      while (next.length < c) next.push(`Player ${next.length + 1}`);
+      while (next.length < c) next.push("");
       return next.slice(0, c);
     });
     if (!groupsTouched) setGroupCount(suggestGroupCount(c));
   };
 
-  const byes = nextPow2(count) - count;
   const perfect = isPow2(count);
-
   const effectiveGroupCount = Math.max(1, Math.min(groupCount, count));
   const groupSizes = useMemo(() => {
     const base = Math.floor(count / effectiveGroupCount);
@@ -1196,6 +1204,10 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
   const resultingBracketSize = nextPow2(qualifierCount || 1);
   const scale = useViewportScale();
   const contentMaxWidth = scale.tier === "desktop" ? 640 : "none";
+
+  // Sync plate players list when names change (for bracket mode)
+  // Don't auto-manage for groups — plate is chosen at advance time
+  const cleanNames = names.map((n, i) => n.trim() || `Player ${i + 1}`);
 
   return (
     <div style={{ minHeight: "100vh", background: BG, color: TEXT, fontFamily: FONT, paddingBottom: 160 }}>
@@ -1212,204 +1224,269 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
       </div>
 
       <div style={{ maxWidth: contentMaxWidth, margin: "0 auto" }}>
-      {loadError && (
-        <div style={{ margin: "16px 20px 0", padding: "12px 16px", background: `${RED}14`, border: `1px solid ${RED}55`, borderRadius: 12 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: RED, marginBottom: 3 }}>Could not load saved tournament</div>
-          <div style={{ fontSize: 13, color: MUTED }}>{loadError}</div>
-        </div>
-      )}
 
-      {savedExists && (
-        <div style={{ margin: "16px 20px 0", padding: "14px 16px", background: `${GOLD}14`, border: `1px solid ${GOLD}55`, borderRadius: 12 }}>
-          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Resume saved tournament?</div>
-          <div style={{ fontSize: 13, color: MUTED, marginBottom: 10 }}>
-            {savedAt ? `Last saved ${new Date(savedAt).toLocaleString()}` : "You have an in-progress tournament saved on this device."}
+        {loadError && (
+          <div style={{ margin: "16px 20px 0", padding: "12px 16px", background: `${RED}14`, border: `1px solid ${RED}55`, borderRadius: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: RED, marginBottom: 3 }}>Could not load saved tournament</div>
+            <div style={{ fontSize: 12, color: MUTED }}>{loadError}</div>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={onResume} style={{ flex: 1, padding: "9px", background: GOLD, border: "none", borderRadius: 8, color: "#0D0F14", fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>Resume</button>
-            <button onClick={onDiscard} style={{ flex: 1, padding: "9px", background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 8, color: MUTED, fontWeight: 600, fontSize: 15, cursor: "pointer", fontFamily: "inherit" }}>Discard</button>
-          </div>
-        </div>
-      )}
+        )}
 
-      {!savedExists && !loadError && (
-        <div style={{ margin: "16px 20px 0", padding: "10px 14px", background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10 }}>
-          <div style={{ fontSize: 12, color: MUTED, fontFamily: MONO }}>No saved tournament found on this device yet.</div>
-        </div>
-      )}
-
-      {/* Tournament name */}
-      <div style={{ padding: "20px 20px 0" }}>
-        <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 10, textTransform: "uppercase" }}>Tournament Name</div>
-        <input
-          value={tournamentName}
-          onChange={e => setTournamentName(e.target.value)}
-          placeholder={`e.g. Summer Smash ${new Date().getFullYear()}`}
-          style={{ width: "100%", background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, padding: "12px 16px", color: TEXT, fontSize: 16, outline: "none", fontFamily: "inherit", boxSizing: "border-box" }}
-        />
-        <div style={{ fontSize: 12, color: MUTED, marginTop: 6 }}>Optional — if left blank, the date will be used as the title.</div>
-      </div>
-
-      {/* Mode toggle */}
-      <div style={{ padding: "20px 20px 0" }}>
-        <div style={{ display: "flex", gap: 8, background: CARD2, padding: 4, borderRadius: 12, border: `1px solid ${BORDER}` }}>
-          {[{ k: "bracket", l: "Knockout Only" }, { k: "groups", l: "Groups → Knockout" }].map(({ k, l }) => (
-            <button key={k} onClick={() => setMode(k)} style={{
-              flex: 1, padding: "9px 0", borderRadius: 9, border: "none",
-              background: mode === k ? GOLD : "transparent",
-              color: mode === k ? "#0D0F14" : MUTED,
-              fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
-            }}>{l}</button>
-          ))}
-        </div>
-      </div>
-
-      <div style={{ padding: "24px 20px 0" }}>
-        <div style={{ marginBottom: 28 }}>
-          <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Number of Players</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            {["-", "+"].map((sym, di) => (
-              <button key={sym} onClick={() => updateCount(count + (di ? 1 : -1))} style={{
-                width: scale.tier === "desktop" ? 52 : 44, height: scale.tier === "desktop" ? 52 : 44,
-                background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10,
-                color: TEXT, fontSize: scale.tier === "desktop" ? 26 : 22, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-              }}>{sym}</button>
-            ))}
-            <div style={{ flex: 1, textAlign: "center", fontSize: 38, fontWeight: 700, color: GOLD, fontFamily: MONO }}>{count}</div>
-          </div>
-
-          {mode === "bracket" && (
-            <div style={{ marginTop: 10, fontSize: 13, color: perfect ? GREEN : MUTED, textAlign: "center", fontFamily: MONO }}>
-              {perfect ? "✓ Perfect bracket — no prelim needed" : (() => {
-                let mainSz = 1;
-                while (mainSz * 2 <= count) mainSz *= 2;
-                const ov = count - mainSz;
-                const prelims = Math.ceil(ov / 2);
-                return `Prelim round: ${prelims} match${prelims > 1 ? "es" : ""} → clean ${mainSz}-player bracket`;
-              })()}
+        {savedExists && (
+          <div style={{ margin: "16px 20px 0", padding: "14px 16px", background: `${GOLD}14`, border: `1px solid ${GOLD}55`, borderRadius: 12 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Resume saved tournament?</div>
+            <div style={{ fontSize: 12, color: MUTED, marginBottom: 10 }}>
+              {savedAt ? `Last saved ${new Date(savedAt).toLocaleString()}` : "You have an in-progress tournament saved on this device."}
             </div>
-          )}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={onResume} style={{ flex: 1, padding: "9px", background: GOLD, border: "none", borderRadius: 8, color: "#0D0F14", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Resume</button>
+              <button onClick={onDiscard} style={{ flex: 1, padding: "9px", background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 8, color: MUTED, fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Discard</button>
+            </div>
+          </div>
+        )}
+
+        {!savedExists && !loadError && (
+          <div style={{ margin: "16px 20px 0", padding: "10px 14px", background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10 }}>
+            <div style={{ fontSize: 11, color: MUTED, fontFamily: MONO }}>No saved tournament found on this device yet.</div>
+          </div>
+        )}
+
+        {/* Tournament name */}
+        <div style={{ padding: "20px 20px 0" }}>
+          <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 10, textTransform: "uppercase" }}>Tournament Name</div>
+          <input
+            value={tournamentName}
+            onChange={e => setTournamentName(e.target.value)}
+            placeholder={`e.g. Summer Smash ${new Date().getFullYear()}`}
+            style={{ width: "100%", background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, padding: "12px 16px", color: TEXT, fontSize: 16, outline: "none", fontFamily: "inherit", boxSizing: "border-box" }}
+          />
+          <div style={{ fontSize: 12, color: MUTED, marginTop: 6 }}>Optional — the date will be used if left blank.</div>
         </div>
 
-        {mode === "groups" && (
+        {/* Mode toggle */}
+        <div style={{ padding: "20px 20px 0" }}>
+          <div style={{ display: "flex", gap: 8, background: CARD2, padding: 4, borderRadius: 12, border: `1px solid ${BORDER}` }}>
+            {[{ k: "bracket", l: "Knockout Only" }, { k: "groups", l: "Groups + Knockout" }].map(({ k, l }) => (
+              <button key={k} onClick={() => setMode(k)} style={{
+                flex: 1, padding: "9px 0", borderRadius: 9, border: "none",
+                background: mode === k ? GOLD : "transparent",
+                color: mode === k ? "#0D0F14" : MUTED,
+                fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
+              }}>{l}</button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ padding: "24px 20px 0" }}>
+          {/* Player count */}
           <div style={{ marginBottom: 28 }}>
-            <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Groups</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Number of Players</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
               {["-", "+"].map((sym, di) => (
-                <button key={sym} onClick={() => { setGroupsTouched(true); setGroupCount(g => Math.max(1, Math.min(count, g + (di ? 1 : -1)))); }} style={{
-                  width: 40, height: 40, background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10,
-                  color: TEXT, fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                <button key={sym} onClick={() => updateCount(count + (di ? 1 : -1))} style={{
+                  width: scale.tier === "desktop" ? 52 : 44, height: scale.tier === "desktop" ? 52 : 44,
+                  background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10,
+                  color: TEXT, fontSize: scale.tier === "desktop" ? 26 : 22, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
                 }}>{sym}</button>
               ))}
-              <div style={{ flex: 1, textAlign: "center", fontSize: 28, fontWeight: 700, color: PURPLE, fontFamily: MONO }}>{effectiveGroupCount}</div>
-            </div>
-            <div style={{ fontSize: 13, color: MUTED, textAlign: "center", fontFamily: MONO, marginBottom: 16 }}>
-              Sizes: {groupSizes.join(", ")} {groupSizes.some(s => s % 2 === 1) ? "· odd groups get a walkover round" : ""}
+              <div style={{ flex: 1, textAlign: "center", fontSize: 38, fontWeight: 700, color: GOLD, fontFamily: MONO }}>{count}</div>
             </div>
 
-            <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 10, textTransform: "uppercase" }}>Advance Per Group</div>
-            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-              {[1, 2, 3, 4].map(v => (
-                <button key={v} onClick={() => setAdvancePerGroup(v)} style={{
-                  flex: 1, padding: "10px 0", borderRadius: 10,
-                  border: `1px solid ${advancePerGroup === v ? PURPLE : BORDER}`,
-                  background: advancePerGroup === v ? `${PURPLE}22` : CARD2,
-                  color: advancePerGroup === v ? PURPLE : MUTED,
-                  fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
-                }}>Top {v}</button>
+            {mode === "bracket" && (
+              <div style={{ marginTop: 10, fontSize: 12, color: perfect ? GREEN : MUTED, textAlign: "center", fontFamily: MONO }}>
+                {perfect ? "Perfect bracket — no prelim needed" : (() => {
+                  let mainSz = 1;
+                  while (mainSz * 2 <= count) mainSz *= 2;
+                  const ov = count - mainSz;
+                  const prelims = Math.ceil(ov / 2);
+                  return `Prelim round: ${prelims} match${prelims > 1 ? "es" : ""} → ${mainSz}-player bracket`;
+                })()}
+              </div>
+            )}
+          </div>
+
+          {/* Group settings */}
+          {mode === "groups" && (
+            <div style={{ marginBottom: 28 }}>
+              <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Groups</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 10 }}>
+                {["-", "+"].map((sym, di) => (
+                  <button key={sym} onClick={() => { setGroupsTouched(true); setGroupCount(g => Math.max(1, Math.min(count, g + (di ? 1 : -1)))); }} style={{
+                    width: 40, height: 40, background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10,
+                    color: TEXT, fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>{sym}</button>
+                ))}
+                <div style={{ flex: 1, textAlign: "center", fontSize: 28, fontWeight: 700, color: PURPLE, fontFamily: MONO }}>{effectiveGroupCount}</div>
+              </div>
+              <div style={{ fontSize: 12, color: MUTED, textAlign: "center", fontFamily: MONO, marginBottom: 16 }}>
+                Sizes: {groupSizes.join(", ")}
+              </div>
+
+              <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 10, textTransform: "uppercase" }}>Advance Per Group</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                {[1, 2, 3, 4].map(v => (
+                  <button key={v} onClick={() => setAdvancePerGroup(v)} style={{
+                    flex: 1, padding: "10px 0", borderRadius: 10,
+                    border: `1px solid ${advancePerGroup === v ? PURPLE : BORDER}`,
+                    background: advancePerGroup === v ? `${PURPLE}22` : CARD2,
+                    color: advancePerGroup === v ? PURPLE : MUTED,
+                    fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit",
+                  }}>Top {v}</button>
+                ))}
+              </div>
+              <div style={{ fontSize: 12, color: MUTED, textAlign: "center", fontFamily: MONO }}>
+                {qualifierCount} qualifiers → {resultingBracketSize}-player bracket
+              </div>
+            </div>
+          )}
+
+          {/* Player names */}
+          <div style={{ marginBottom: 28 }}>
+            <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Player Names</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {names.map((name, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 28, height: 28, borderRadius: 6, background: CARD2, border: `1px solid ${BORDER}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontFamily: MONO, color: MUTED, flexShrink: 0 }}>{i + 1}</div>
+                  <input
+                    value={name}
+                    onChange={e => { const n = [...names]; n[i] = e.target.value; setNames(n); }}
+                    placeholder={`Player ${i + 1}`}
+                    style={{ flex: 1, background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "10px 14px", color: TEXT, fontSize: 16, outline: "none", fontFamily: "inherit" }}
+                  />
+                </div>
               ))}
             </div>
-            <div style={{ fontSize: 13, color: MUTED, textAlign: "center", fontFamily: MONO }}>
-              {qualifierCount} qualifiers → {resultingBracketSize}-player knockout bracket
-              {qualifierCount !== resultingBracketSize && ` (${resultingBracketSize - qualifierCount} prelim spot${resultingBracketSize - qualifierCount !== 1 ? "s" : ""} in bracket)`}
-            </div>
           </div>
-        )}
 
-        <div>
-          <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Player Names</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {names.map((name, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{ width: 28, height: 28, borderRadius: 6, background: CARD2, border: `1px solid ${BORDER}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontFamily: MONO, color: MUTED, flexShrink: 0 }}>{i + 1}</div>
-                <input
-                  value={name}
-                  onChange={e => { const n = [...names]; n[i] = e.target.value; setNames(n); }}
-                  placeholder={`Player ${i + 1}`}
-                  style={{ flex: 1, background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "10px 14px", color: TEXT, fontSize: 17, outline: "none", fontFamily: "inherit" }}
-                />
+          {/* Scoring */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Scoring</div>
+            <div onClick={() => setUseScoring(v => !v)} style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              background: CARD2, border: `1px solid ${useScoring ? GOLD + "66" : BORDER}`,
+              borderRadius: 12, padding: "12px 14px", cursor: "pointer", marginBottom: 12,
+            }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>Track game scores</div>
+                <div style={{ fontSize: 12, color: MUTED, marginTop: 3 }}>{useScoring ? "Tap +/- to enter scores" : "Just tap the winner"}</div>
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div style={{ padding: "24px 20px 8px" }}>
-        <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Scoring</div>
-        <div onClick={() => setUseScoring(v => !v)} style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          background: CARD2, border: `1px solid ${useScoring ? GOLD + "66" : BORDER}`,
-          borderRadius: 12, padding: "12px 14px", cursor: "pointer", marginBottom: 12,
-        }}>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>Track game scores</div>
-            <div style={{ fontSize: 13, color: MUTED, marginTop: 3 }}>{useScoring ? "Tap +/- to enter game scores; winner is automatic" : "Just tap the winner's name"}</div>
-          </div>
-          <div style={{ width: 44, height: 26, borderRadius: 13, background: useScoring ? GOLD : BORDER, position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
-            <div style={{ position: "absolute", top: 4, left: useScoring ? 22 : 4, width: 18, height: 18, borderRadius: 9, background: "#fff", transition: "left 0.2s" }} />
-          </div>
-        </div>
-
-        {useScoring && (
-          <div style={{ display: "flex", gap: 8 }}>
-            {[3, 5, 7].map(v => (
-              <button key={v} onClick={() => setBestOf(v)} style={{
-                flex: 1, padding: "10px 0", borderRadius: 10,
-                border: `1px solid ${bestOf === v ? GOLD : BORDER}`,
-                background: bestOf === v ? `${GOLD}22` : CARD2,
-                color: bestOf === v ? GOLD : MUTED,
-                fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit",
-              }}>Best of {v}</button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {mode === "bracket" && (
-        <div style={{ padding: "24px 20px 8px" }}>
-          <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Format</div>
-          <div onClick={() => setGrandFinalEnabled(v => !v)} style={{
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-            background: CARD2, border: `1px solid ${grandFinalEnabled ? GOLD + "66" : BORDER}`,
-            borderRadius: 12, padding: "12px 14px", cursor: "pointer",
-          }}>
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>Grand Final</div>
-              <div style={{ fontSize: 13, color: MUTED, marginTop: 3 }}>{grandFinalEnabled ? "LB winner faces WB winner" : "WB winner is champion"}</div>
+              <div style={{ width: 44, height: 26, borderRadius: 13, background: useScoring ? GOLD : BORDER, position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
+                <div style={{ position: "absolute", top: 4, left: useScoring ? 22 : 4, width: 18, height: 18, borderRadius: 9, background: "#fff", transition: "left 0.2s" }} />
+              </div>
             </div>
-            <div style={{ width: 44, height: 26, borderRadius: 13, background: grandFinalEnabled ? GOLD : BORDER, position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
-              <div style={{ position: "absolute", top: 4, left: grandFinalEnabled ? 22 : 4, width: 18, height: 18, borderRadius: 9, background: "#fff", transition: "left 0.2s" }} />
+            {useScoring && (
+              <div style={{ display: "flex", gap: 8 }}>
+                {[3, 5, 7].map(v => (
+                  <button key={v} onClick={() => setBestOf(v)} style={{
+                    flex: 1, padding: "10px 0", borderRadius: 10,
+                    border: `1px solid ${bestOf === v ? GOLD : BORDER}`,
+                    background: bestOf === v ? `${GOLD}22` : CARD2,
+                    color: bestOf === v ? GOLD : MUTED,
+                    fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit",
+                  }}>Best of {v}</button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Elim format — knockout-only mode */}
+          {mode === "bracket" && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Format</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                {[{ k: "single", l: "Single Elimination" }, { k: "double", l: "Double Elimination" }].map(({ k, l }) => (
+                  <button key={k} onClick={() => setElimType(k)} style={{
+                    flex: 1, padding: "10px 0", borderRadius: 10,
+                    border: `1px solid ${elimType === k ? PURPLE : BORDER}`,
+                    background: elimType === k ? `${PURPLE}22` : CARD2,
+                    color: elimType === k ? PURPLE : MUTED,
+                    fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit",
+                  }}>{l}</button>
+                ))}
+              </div>
+              {elimType === "double" && (
+                <div onClick={() => setGrandFinalEnabled(v => !v)} style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  background: CARD2, border: `1px solid ${grandFinalEnabled ? GOLD + "66" : BORDER}`,
+                  borderRadius: 12, padding: "12px 14px", cursor: "pointer",
+                }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>Grand Final</div>
+                    <div style={{ fontSize: 12, color: MUTED, marginTop: 3 }}>{grandFinalEnabled ? "LB winner faces WB winner" : "WB winner is champion"}</div>
+                  </div>
+                  <div style={{ width: 44, height: 26, borderRadius: 13, background: grandFinalEnabled ? GOLD : BORDER, position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
+                    <div style={{ position: "absolute", top: 4, left: grandFinalEnabled ? 22 : 4, width: 18, height: 18, borderRadius: 9, background: "#fff", transition: "left 0.2s" }} />
+                  </div>
+                </div>
+              )}
             </div>
+          )}
+
+          {/* Plate tournament */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Plate Tournament</div>
+            <div onClick={() => setPlateEnabled(v => !v)} style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              background: CARD2, border: `1px solid ${plateEnabled ? "#FB923C66" : BORDER}`,
+              borderRadius: 12, padding: "12px 14px", cursor: "pointer", marginBottom: plateEnabled ? 12 : 0,
+            }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>Enable Plate</div>
+                <div style={{ fontSize: 12, color: MUTED, marginTop: 3 }}>
+                  {mode === "groups" ? "Players will be selected after groups complete" : "Single-elim bracket running alongside the main tournament"}
+                </div>
+              </div>
+              <div style={{ width: 44, height: 26, borderRadius: 13, background: plateEnabled ? "#FB923C" : BORDER, position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
+                <div style={{ position: "absolute", top: 4, left: plateEnabled ? 22 : 4, width: 18, height: 18, borderRadius: 9, background: "#fff", transition: "left 0.2s" }} />
+              </div>
+            </div>
+
+            {/* For knockout-only: pick plate players now */}
+            {plateEnabled && mode === "bracket" && (
+              <div style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#FB923C", marginBottom: 10 }}>Select Plate Players — tap to include</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+                  {cleanNames.map(p => {
+                    const included = platePlayers.includes(p);
+                    return (
+                      <button key={p} onClick={() => setPlatePlayers(prev => included ? prev.filter(x => x !== p) : [...prev, p])} style={{
+                        fontSize: 13, padding: "6px 12px", borderRadius: 8, cursor: "pointer",
+                        background: included ? "#FB923C22" : BG,
+                        border: `1px solid ${included ? "#FB923C" : BORDER}`,
+                        color: included ? "#FB923C" : MUTED,
+                        fontWeight: included ? 600 : 400, fontFamily: "inherit",
+                      }}>{p}</button>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize: 12, color: MUTED }}>{platePlayers.length} selected · needs at least 2 to generate a bracket</div>
+              </div>
+            )}
+
+            {plateEnabled && mode === "groups" && (
+              <div style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, padding: "12px 14px" }}>
+                <div style={{ fontSize: 12, color: MUTED }}>You will choose plate players after all group matches are complete.</div>
+              </div>
+            )}
           </div>
         </div>
-      )}
       </div>
 
       <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, padding: "16px 20px", background: `linear-gradient(to top, ${BG} 80%, transparent)` }}>
         <div style={{ maxWidth: contentMaxWidth, margin: "0 auto" }}>
-        <button
-          onClick={() => {
-            const cleanNames = names.map(n => n.trim() || null).filter(Boolean);
-            if (mode === "bracket") {
-              onGenerateBracket(cleanNames, grandFinalEnabled, useScoring, bestOf, tournamentName.trim());
-            } else {
-              onGenerateGroups(cleanNames, effectiveGroupCount, advancePerGroup, useScoring, bestOf, grandFinalEnabled, tournamentName.trim());
-            }
-          }}
-          style={{ width: "100%", padding: scale.tier === "desktop" ? "18px" : "16px", background: GOLD, border: "none", borderRadius: 14, color: "#0D0F14", fontSize: scale.tier === "desktop" ? 20 : 17, fontWeight: 700, cursor: "pointer", letterSpacing: "0.02em", fontFamily: "inherit" }}
-        >
-          {mode === "bracket" ? "Generate Bracket →" : "Generate Groups →"}
-        </button>
+          <button
+            onClick={() => {
+              const names2 = cleanNames;
+              if (mode === "bracket") {
+                onGenerateBracket(names2, grandFinalEnabled, useScoring, bestOf, tournamentName.trim(), elimType, plateEnabled ? platePlayers : []);
+              } else {
+                onGenerateGroups(names2, effectiveGroupCount, advancePerGroup, useScoring, bestOf, grandFinalEnabled, tournamentName.trim(), plateEnabled);
+              }
+            }}
+            style={{ width: "100%", padding: scale.tier === "desktop" ? "18px" : "16px", background: GOLD, border: "none", borderRadius: 14, color: "#0D0F14", fontSize: scale.tier === "desktop" ? 18 : 16, fontWeight: 700, cursor: "pointer", letterSpacing: "0.02em", fontFamily: "inherit" }}
+          >
+            {mode === "bracket" ? "Generate Bracket →" : "Generate Groups →"}
+          </button>
         </div>
       </div>
     </div>
@@ -1421,7 +1498,7 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
 // ═══════════════════════════════════════════════════════════════════════════
 
 function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracket, saveStatus, saveError }) {
-  const { groups, matchesByGroup, advancePerGroup, useScoring, bestOf } = groupState;
+  const { groups, matchesByGroup, advancePerGroup, useScoring, bestOf, plateEnabled: groupPlateEnabled } = groupState;
   const [activeGroup, setActiveGroup] = useState(0);
   const scale = useViewportScale();
 
@@ -1436,12 +1513,11 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
       let p1Games = m.p1Games || 0, p2Games = m.p2Games || 0;
       if (who === "p1") p1Games = Math.max(0, Math.min(need, p1Games + delta));
       else p2Games = Math.max(0, Math.min(need, p2Games + delta));
-      let winner = m.winner, loser = m.loser;
+      let winner = null, loser = null;
       if (p1Games >= need) { winner = m.p1; loser = m.p2; }
       else if (p2Games >= need) { winner = m.p2; loser = m.p1; }
       list[idx] = { ...m, p1Games, p2Games, winner, loser };
-      const updated = { ...prev, matchesByGroup: { ...prev.matchesByGroup, [groupIdx]: list } };
-      return updated;
+      return { ...prev, matchesByGroup: { ...prev.matchesByGroup, [groupIdx]: list } };
     });
   }, [setGroupState]);
 
@@ -1453,7 +1529,7 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
       const m = list[idx];
       const loser = winner === m.p1 ? m.p2 : m.p1;
       const need = gamesToWin(m.bestOf || 3);
-      list[idx] = { ...m, winner, loser, p1Games: winner === m.p1 ? need : (m.p1Games||0), p2Games: winner === m.p2 ? need : (m.p2Games||0) };
+      list[idx] = { ...m, winner, loser, p1Games: winner === m.p1 ? need : 0, p2Games: winner === m.p2 ? need : 0 };
       return { ...prev, matchesByGroup: { ...prev.matchesByGroup, [groupIdx]: list } };
     });
   }, [setGroupState]);
@@ -1478,22 +1554,34 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
 
   const qualifiers = allStandings.flatMap(s => s.slice(0, advancePerGroup).map(x => x.player));
 
+  // Advance modal state
+  const [showModal, setShowModal] = useState(false);
+  const [platePlayers, setPlatePlayers] = useState([]);
+  const allPlayers = groups.flat();
+
+  const openModal = () => {
+    setPlatePlayers([]);
+    setShowModal(true);
+  };
+
+  const doAdvance = () => {
+    onAdvanceToBracket({ qualifiers, plateEnabled: groupPlateEnabled, platePlayers });
+  };
+
   return (
     <div style={{ minHeight: "100vh", background: BG, color: TEXT, fontFamily: FONT }}>
       <div style={{ background: CARD, borderBottom: `1px solid ${BORDER}`, padding: "14px 16px", position: "sticky", top: 0, zIndex: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <button onClick={onBack} style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT, padding: "6px 12px", cursor: "pointer", fontSize: 15, fontFamily: "inherit", flexShrink: 0 }}>← Back</button>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 11, fontFamily: MONO, color: PURPLE, letterSpacing: "0.2em" }}>GROUP STAGE</div>
+            <div style={{ fontSize: 11, fontFamily: MONO, color: PURPLE, letterSpacing: "0.06em", textTransform: "uppercase" }}>Group Stage</div>
             <div style={{ fontSize: 17, fontWeight: 700 }}>{groups.length} groups · {doneMatches}/{totalMatches} matches</div>
           </div>
         </div>
         <div style={{ marginTop: 10, height: 3, background: BORDER, borderRadius: 2 }}>
           <div style={{ height: "100%", borderRadius: 2, background: PURPLE, width: `${totalMatches ? (doneMatches / totalMatches) * 100 : 0}%`, transition: "width 0.3s" }} />
         </div>
-        <div style={{ marginTop: 6 }}>
-          <SaveBadge status={saveStatus} error={saveError} />
-        </div>
+        <div style={{ marginTop: 6 }}><SaveBadge status={saveStatus} error={saveError} /></div>
         <div style={{ display: "flex", gap: 6, marginTop: 8, overflowX: "auto" }}>
           {groups.map((g, i) => (
             <button key={i} onClick={() => setActiveGroup(i)} style={{
@@ -1501,30 +1589,22 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
               background: activeGroup === i ? `${PURPLE}22` : "transparent",
               border: `1px solid ${activeGroup === i ? PURPLE : BORDER}`,
               borderRadius: 8, color: activeGroup === i ? PURPLE : MUTED,
-              fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: MONO, letterSpacing: "0.05em",
+              fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: MONO,
             }}>GROUP {String.fromCharCode(65 + i)}</button>
           ))}
         </div>
       </div>
 
       <div style={{ padding: "20px 16px 140px", maxWidth: scale.tier === "desktop" ? 760 : "none", margin: "0 auto" }}>
-        {/* Standings table */}
-        <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 10, textTransform: "uppercase" }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
           Group {String.fromCharCode(65 + activeGroup)} Standings
         </div>
         <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 12, overflow: "visible", marginBottom: 24 }}>
           <div style={{ display: "grid", gridTemplateColumns: "28px 1fr 52px 60px 64px", padding: "8px 14px", fontSize: 11, color: MUTED, fontFamily: FONT, fontWeight: 600, borderBottom: `1px solid ${BORDER}`, letterSpacing: "0.03em" }}>
-            <div>#</div>
-            <div>Player</div>
-            <Tooltip label={"Wins – Losses\n\nNumber of matches won and lost in this group."}>
-              <span style={{ borderBottom: `1px dashed ${MUTED}`, cursor: "help" }}>W–L</span>
-            </Tooltip>
-            <Tooltip label={"Points Per Game\n\nGames won ÷ total games played.\nHigher is better.\nRange: 0.00 – 1.00"}>
-              <span style={{ borderBottom: `1px dashed ${MUTED}`, cursor: "help" }}>PPG</span>
-            </Tooltip>
-            <Tooltip label={"Game Differential\n\nGames won minus games lost across all matches.\nE.g. winning 2–1 and 2–0 gives +3.\nUsed as a tiebreaker after PPG."}>
-              <span style={{ borderBottom: `1px dashed ${MUTED}`, cursor: "help" }}>±Games</span>
-            </Tooltip>
+            <div>#</div><div>Player</div>
+            <Tooltip label={"Wins - Losses\n\nNumber of matches won and lost in this group."}><span style={{ borderBottom: `1px dashed ${MUTED}`, cursor: "help" }}>W-L</span></Tooltip>
+            <Tooltip label={"Points Per Game\n\nGames won divided by total games played.\nRange: 0.00 to 1.00"}><span style={{ borderBottom: `1px dashed ${MUTED}`, cursor: "help" }}>PPG</span></Tooltip>
+            <Tooltip label={"Game Differential\n\nGames won minus games lost across all matches.\nUsed as tiebreaker after PPG."}><span style={{ borderBottom: `1px dashed ${MUTED}`, cursor: "help" }}>+/-GMS</span></Tooltip>
           </div>
           {allStandings[activeGroup].map((s, i) => (
             <div key={s.player} style={{
@@ -1535,31 +1615,25 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
             }}>
               <div style={{ color: i < advancePerGroup ? GREEN : MUTED, fontWeight: 700 }}>{i + 1}</div>
               <div style={{ fontWeight: i < advancePerGroup ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.player}</div>
-              <div style={{ color: MUTED, fontFamily: MONO, fontSize: 13 }}>{s.wins}–{s.losses}</div>
+              <div style={{ color: MUTED, fontFamily: MONO, fontSize: 13 }}>{s.wins}-{s.losses}</div>
               <div style={{ color: MUTED, fontFamily: MONO, fontSize: 13 }}>{s.ppg.toFixed(2)}</div>
               <div style={{ color: s.gameDiff > 0 ? GREEN : s.gameDiff < 0 ? RED : MUTED, fontFamily: MONO, fontSize: 13, fontWeight: 600 }}>{s.gameDiff > 0 ? "+" : ""}{s.gameDiff}</div>
             </div>
           ))}
         </div>
 
-        {/* Matches */}
-        <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 10, textTransform: "uppercase" }}>Matches</div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Matches</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {(matchesByGroup[activeGroup] || []).map(m => {
-            const matchMapShim = { [m.id]: { ...m, matchNum: m.id.replace("rr", ""), winnerGoesToMatchId: null, loserGoesToMatchId: null, p1FromMatchId: null, p2FromMatchId: null } };
+            const shim = { [m.id]: { ...m, matchNum: m.id.replace("rr", ""), winnerGoesToMatchId: null, loserGoesToMatchId: null, p1FromMatchId: null, p2FromMatchId: null } };
             return (
-              <div key={m.id} style={{ width: "100%" }}>
-                <MatchCard
-                  matchId={m.id}
-                  matchMap={matchMapShim}
+              <div key={m.id}>
+                <MatchCard matchId={m.id} matchMap={shim}
                   onPickWinner={(id, w) => handlePick(activeGroup, id, w)}
                   onChangeWinner={(id, w) => handleChangeWinner(activeGroup, id, w)}
                   onScore={(id, who, delta) => handleScore(activeGroup, id, who, delta)}
-                  isLosers={false}
-                  isGrandFinal={false}
-                  useScoring={useScoring}
-                  scale={{ ...scale, cardWidth: "100%" }}
-                />
+                  isLosers={false} isGrandFinal={false} useScoring={useScoring}
+                  scale={{ ...scale, cardWidth: "100%" }} />
               </div>
             );
           })}
@@ -1567,105 +1641,53 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
       </div>
 
       <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, padding: "16px 20px", background: `linear-gradient(to top, ${BG} 85%, transparent)` }}>
-        <button
-          disabled={!allComplete}
-          onClick={() => onAdvanceToBracket(qualifiers)}
-          style={{
-            width: "100%", padding: "16px", background: allComplete ? GOLD : CARD2,
-            border: allComplete ? "none" : `1px solid ${BORDER}`, borderRadius: 14,
-            color: allComplete ? "#0D0F14" : MUTED, fontSize: 17, fontWeight: 700,
-            cursor: allComplete ? "pointer" : "not-allowed", fontFamily: "inherit",
-          }}
-        >
-          {allComplete ? `Advance ${qualifiers.length} Qualifiers to Bracket →` : `Finish all matches to advance (${doneMatches}/${totalMatches})`}
+        <button disabled={!allComplete} onClick={openModal} style={{
+          width: "100%", padding: "16px", background: allComplete ? GOLD : CARD2,
+          border: allComplete ? "none" : `1px solid ${BORDER}`, borderRadius: 14,
+          color: allComplete ? "#0D0F14" : MUTED, fontSize: 17, fontWeight: 700,
+          cursor: allComplete ? "pointer" : "not-allowed", fontFamily: "inherit",
+        }}>
+          {allComplete ? `Advance ${qualifiers.length} Qualifiers to Bracket →` : `Finish all matches first (${doneMatches}/${totalMatches})`}
         </button>
       </div>
-    </div>
-  );
-}
 
-// ═══════════════════════════════════════════════════════════════════════════
-// PLATE SCREEN (single-elimination)
-// ═══════════════════════════════════════════════════════════════════════════
+      {/* Advance modal */}
+      {showModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 200, display: "flex", alignItems: "flex-end" }}>
+          <div style={{ background: CARD, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: "24px 20px 40px", width: "100%", maxHeight: "85vh", overflowY: "auto", boxSizing: "border-box" }}>
+            <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>Knockout Stage</div>
+            <div style={{ fontSize: 14, color: MUTED, marginBottom: 20 }}>These {qualifiers.length} players advance to the bracket.</div>
 
-function PlateScreen({ plateData, setPlateMatchMap, onBack, useScoring, saveStatus, saveError }) {
-  const { matchMap, rounds, finalId } = plateData;
-  const scale = useViewportScale();
-
-  const handlePick = useCallback((matchId, winner) => {
-    setPlateMatchMap(prev => recordWinner(prev, matchId, winner));
-  }, [setPlateMatchMap]);
-
-  const handleChangeWinner = useCallback((matchId, newWinner) => {
-    setPlateMatchMap(prev => changeWinner(prev, matchId, newWinner));
-  }, [setPlateMatchMap]);
-
-  const handleScore = useCallback((matchId, who, delta) => {
-    setPlateMatchMap(prev => applyScoreChange(prev, matchId, who, delta));
-  }, [setPlateMatchMap]);
-
-  const totalMatches = Object.values(matchMap).filter(m => !m.isBye).length;
-  const doneCount    = Object.values(matchMap).filter(m => m.winner && !m.isBye).length;
-  const champion     = matchMap[finalId]?.winner;
-
-  const roundLabel = (i, total) => {
-    if (i === total - 1) return "PLATE FINAL";
-    if (i === total - 2) return "SEMI FINAL";
-    if (i === total - 3) return "QTR FINAL";
-    return `ROUND ${i + 1}`;
-  };
-
-  const ORANGE = "#FB923C";
-
-  return (
-    <div style={{ minHeight: "100vh", background: BG, color: TEXT, fontFamily: FONT }}>
-      <div style={{ background: CARD, borderBottom: `1px solid ${BORDER}`, padding: "14px 16px", position: "sticky", top: 0, zIndex: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <button onClick={onBack} style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT, padding: "6px 12px", cursor: "pointer", fontSize: 15, fontFamily: "inherit", flexShrink: 0 }}>← Back</button>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: ORANGE, letterSpacing: "0.06em", textTransform: "uppercase" }}>Plate Tournament</div>
-            <div style={{ fontSize: 17, fontWeight: 700 }}>Single Elimination · {doneCount}/{totalMatches} matches</div>
-          </div>
-          {champion && (
-            <div style={{ flexShrink: 0, textAlign: "right" }}>
-              <div style={{ fontSize: 10, fontFamily: MONO, color: ORANGE, letterSpacing: "0.1em" }}>PLATE WINNER</div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: ORANGE, maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{champion}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 24 }}>
+              {qualifiers.map(p => <span key={p} style={{ fontSize: 13, padding: "4px 10px", background: `${GREEN}22`, border: `1px solid ${GREEN}44`, borderRadius: 8, color: GREEN, fontWeight: 600 }}>{p}</span>)}
             </div>
-          )}
-        </div>
-        <div style={{ marginTop: 10, height: 3, background: BORDER, borderRadius: 2 }}>
-          <div style={{ height: "100%", borderRadius: 2, background: ORANGE, width: `${totalMatches ? (doneCount / totalMatches) * 100 : 0}%`, transition: "width 0.3s" }} />
-        </div>
-        <div style={{ marginTop: 6 }}><SaveBadge status={saveStatus} error={saveError} /></div>
-      </div>
 
-      <div style={{ overflowX: "auto", padding: "20px 16px 120px" }}>
-        <div style={{ display: "flex", gap: scale.tier === "desktop" ? 48 : 32, alignItems: "flex-start" }}>
-          {rounds.map((round, i) => (
-            <RoundCol
-              key={i}
-              title={roundLabel(i, rounds.length)}
-              matchIds={round}
-              matchMap={matchMap}
-              onPickWinner={handlePick}
-              onChangeWinner={handleChangeWinner}
-              onScore={handleScore}
-              isLosers={false}
-              isGrandFinal={i === rounds.length - 1}
-              useScoring={useScoring}
-              scale={scale}
-              spacing={i === 0 ? 16 : 16 * Math.pow(2, i)}
-            />
-          ))}
-        </div>
+            {groupPlateEnabled && (
+              <>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#FB923C", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Plate Players — tap to include</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+                  {allPlayers.map(p => {
+                    const inc = platePlayers.includes(p);
+                    return (
+                      <button key={p} onClick={() => setPlatePlayers(prev => inc ? prev.filter(x => x !== p) : [...prev, p])} style={{
+                        fontSize: 13, padding: "6px 12px", borderRadius: 8, cursor: "pointer",
+                        background: inc ? "#FB923C22" : CARD2, border: `1px solid ${inc ? "#FB923C" : BORDER}`,
+                        color: inc ? "#FB923C" : MUTED, fontWeight: inc ? 600 : 400, fontFamily: "inherit",
+                      }}>{p}</button>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize: 12, color: MUTED, marginBottom: 20 }}>{platePlayers.length} selected</div>
+              </>
+            )}
 
-        {champion && (
-          <div style={{ marginTop: 32, padding: 20, background: `${ORANGE}11`, border: `1px solid ${ORANGE}55`, borderRadius: 12, textAlign: "center", boxShadow: `0 0 32px ${ORANGE}22` }}>
-            <div style={{ fontSize: 11, fontFamily: MONO, color: ORANGE, letterSpacing: "0.2em", marginBottom: 8 }}>🥉 PLATE WINNER</div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: ORANGE }}>{champion}</div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setShowModal(false)} style={{ flex: 1, padding: "14px", background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, color: TEXT, fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+              <button onClick={doAdvance} style={{ flex: 2, padding: "14px", background: GOLD, border: "none", borderRadius: 12, color: "#0D0F14", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Generate Brackets →</button>
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1674,7 +1696,7 @@ function PlateScreen({ plateData, setPlateMatchMap, onBack, useScoring, saveStat
 // BRACKET SCREEN
 // ═══════════════════════════════════════════════════════════════════════════
 
-function BracketScreen({ bracketData, setMatchMap, players, onBack, grandFinalEnabled, useScoring, saveStatus, saveError }) {
+function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, players, onBack, grandFinalEnabled, useScoring, isSingleElim, saveStatus, saveError }) {
   const { matchMap, winnersRounds, losersRounds, grandFinalId, prelimRound } = bracketData;
   const allWbRounds = prelimRound ? [prelimRound, ...winnersRounds] : winnersRounds;
   const scale = useViewportScale();
@@ -1682,36 +1704,47 @@ function BracketScreen({ bracketData, setMatchMap, players, onBack, grandFinalEn
   const handlePick = useCallback((matchId, winner) => {
     setMatchMap(prev => recordWinner(prev, matchId, winner));
   }, [setMatchMap]);
-
   const handleChangeWinner = useCallback((matchId, newWinner) => {
     setMatchMap(prev => changeWinner(prev, matchId, newWinner));
   }, [setMatchMap]);
-
   const handleScore = useCallback((matchId, who, delta) => {
     setMatchMap(prev => applyScoreChange(prev, matchId, who, delta));
   }, [setMatchMap]);
 
-  const totalMatches = Object.values(matchMap).filter(m => !m.isBye).length;
-  const doneCount    = Object.values(matchMap).filter(m => m.winner && !m.isBye).length;
-  const wbFinalId  = winnersRounds[winnersRounds.length - 1][0];
-  const champion   = grandFinalEnabled ? matchMap[grandFinalId]?.winner : matchMap[wbFinalId]?.winner;
+  const wbTotal = Object.values(matchMap).filter(m => !m.isBye).length;
+  const wbDone  = Object.values(matchMap).filter(m => m.winner && !m.isBye).length;
+  const plTotal = plateData ? Object.values(plateData.matchMap).filter(m => !m.isBye).length : 0;
+  const plDone  = plateData ? Object.values(plateData.matchMap).filter(m => m.winner && !m.isBye).length : 0;
+  const totalMatches = wbTotal + plTotal;
+  const doneCount = wbDone + plDone;
+
+  const wbFinalId = winnersRounds[winnersRounds.length - 1][0];
+  const champion = isSingleElim
+    ? matchMap[wbFinalId]?.winner
+    : (grandFinalEnabled ? matchMap[grandFinalId]?.winner : matchMap[wbFinalId]?.winner);
+
+  const ORANGE = "#FB923C";
+  const tabs = [
+    { key: "wb", label: isSingleElim ? "Bracket" : "Winners", color: PURPLE },
+    ...(!isSingleElim ? [{ key: "lb", label: "Losers", color: BLUE }] : []),
+    ...(!isSingleElim && grandFinalEnabled ? [{ key: "gf", label: "Final", color: GOLD }] : []),
+    ...(plateData ? [{ key: "plate", label: "Plate", color: ORANGE }] : []),
+  ];
 
   const [activeTab, setActiveTab] = useState("wb");
 
   const wbLabel = (i, total) => {
     if (prelimRound && i === 0) return "WB PRELIM";
     const adj = prelimRound ? i - 1 : i;
-    if (i === total - 1) return "WB FINAL";
-    return adj === 0 ? "WB ROUND 1" : `WB ROUND ${adj + 1}`;
+    if (i === total - 1) return isSingleElim ? "FINAL" : "WB FINAL";
+    if (adj === 0) return isSingleElim ? "ROUND 1" : "WB ROUND 1";
+    return isSingleElim ? `ROUND ${adj + 1}` : `WB ROUND ${adj + 1}`;
   };
 
   const lbLabel = (i) => {
     if (i === losersRounds.length - 1) return "LB FINAL";
     const hasPrelim = losersRounds.length > 0 && losersRounds[0].some(id => matchMap[id].isLBPrelim);
-    if (hasPrelim) {
-      if (i === 0) return "LB PRELIM";
-      return i === 1 ? "LB ROUND 1" : `LB ROUND ${i}`;
-    }
+    if (hasPrelim) { if (i === 0) return "LB PRELIM"; return i === 1 ? "LB ROUND 1" : `LB ROUND ${i}`; }
     return i === 0 ? "LB ROUND 1" : `LB ROUND ${i + 1}`;
   };
 
@@ -1721,71 +1754,61 @@ function BracketScreen({ bracketData, setMatchMap, players, onBack, grandFinalEn
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <button onClick={onBack} style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT, padding: "6px 12px", cursor: "pointer", fontSize: 15, fontFamily: "inherit", flexShrink: 0 }}>← Back</button>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 11, fontFamily: MONO, color: GOLD, letterSpacing: "0.2em" }}>DOUBLE ELIMINATION</div>
+            <div style={{ fontSize: 11, fontFamily: MONO, color: GOLD, letterSpacing: "0.06em", textTransform: "uppercase" }}>{isSingleElim ? "Single Elimination" : "Double Elimination"}</div>
             <div style={{ fontSize: 17, fontWeight: 700 }}>{players.length} Players · {doneCount}/{totalMatches} matches</div>
           </div>
           {champion && (
             <div style={{ flexShrink: 0, textAlign: "right" }}>
-              <div style={{ fontSize: 11, fontFamily: MONO, color: GOLD, letterSpacing: "0.1em" }}>CHAMPION</div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: GOLD, maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{champion}</div>
+              <div style={{ fontSize: 10, fontFamily: MONO, color: GOLD, letterSpacing: "0.1em" }}>CHAMPION</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: GOLD, maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{champion}</div>
             </div>
           )}
         </div>
-
         <div style={{ marginTop: 10, height: 3, background: BORDER, borderRadius: 2 }}>
           <div style={{ height: "100%", borderRadius: 2, background: GOLD, width: `${totalMatches ? (doneCount / totalMatches) * 100 : 0}%`, transition: "width 0.3s" }} />
         </div>
-
-        <div style={{ marginTop: 6 }}>
-          <SaveBadge status={saveStatus} error={saveError} />
-        </div>
-
+        <div style={{ marginTop: 6 }}><SaveBadge status={saveStatus} error={saveError} /></div>
         <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-          {[
-            { key: "wb", label: "Winners", color: PURPLE },
-            { key: "lb", label: "Losers", color: BLUE },
-            ...(grandFinalEnabled ? [{ key: "gf", label: "Final", color: GOLD }] : []),
-          ].map(({ key, label, color }) => (
+          {tabs.map(({ key, label, color }) => (
             <button key={key} onClick={() => setActiveTab(key)} style={{
               flex: 1, padding: "6px 0",
               background: activeTab === key ? `${color}22` : "transparent",
               border: `1px solid ${activeTab === key ? color : BORDER}`,
               borderRadius: 8, color: activeTab === key ? color : MUTED,
-              fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: MONO, letterSpacing: "0.05em",
+              fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: MONO,
             }}>{label}</button>
           ))}
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 16, padding: "10px 16px", borderBottom: `1px solid ${BORDER}`, background: CARD, flexWrap: "wrap" }}>
-        {[{ color: PURPLE, label: "Winners" }, { color: BLUE, label: "Losers" }, { color: GOLD, label: "Grand Final" }, { color: GREEN, label: "Complete" }].map(({ color, label }) => (
-          <div key={label} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: MUTED }}>
-            <div style={{ width: 8, height: 8, borderRadius: 2, background: color }} />{label}
-          </div>
-        ))}
-      </div>
-
       <div style={{ overflowX: "auto", padding: "20px 16px 120px" }}>
+
+        {/* WB / Single-elim bracket */}
         {activeTab === "wb" && (
           <div style={{ display: "flex", gap: scale.tier === "desktop" ? 48 : 32, alignItems: "flex-start" }}>
             {allWbRounds.map((round, i) => (
-              <RoundCol
-                key={i} title={wbLabel(i, allWbRounds.length)} matchIds={round} matchMap={matchMap}
+              <RoundCol key={i} title={wbLabel(i, allWbRounds.length)} matchIds={round} matchMap={matchMap}
                 onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
                 isLosers={false} useScoring={useScoring} scale={scale}
                 spacing={i === 0 ? 16 : 16 * Math.pow(2, Math.max(0, i - (prelimRound ? 1 : 0)))}
               />
             ))}
+            {champion && isSingleElim && (
+              <div style={{ padding: 20, background: `${GOLD}11`, border: `1px solid ${GOLD}55`, borderRadius: 12, textAlign: "center", minWidth: 180 }}>
+                <div style={{ fontSize: 11, fontFamily: MONO, color: GOLD, letterSpacing: "0.15em", marginBottom: 8 }}>🏆 CHAMPION</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: GOLD }}>{champion}</div>
+              </div>
+            )}
           </div>
         )}
 
-        {activeTab === "lb" && (
+        {/* Double-elim LB */}
+        {activeTab === "lb" && !isSingleElim && (
           losersRounds.length === 0
-            ? <div style={{ color: MUTED, padding: 20, fontStyle: "italic" }}>No losers bracket (2 players)</div>
+            ? <div style={{ color: MUTED, padding: 20, fontStyle: "italic" }}>No losers bracket</div>
             : <div style={{ display: "flex", gap: scale.tier === "desktop" ? 48 : 32, alignItems: "flex-start" }}>
                 {losersRounds.map((round, i) => (
-                  <RoundCol
-                    key={i} title={lbLabel(i)} matchIds={round} matchMap={matchMap}
+                  <RoundCol key={i} title={lbLabel(i)} matchIds={round} matchMap={matchMap}
                     onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
                     isLosers={true} useScoring={useScoring} spacing={16} scale={scale}
                   />
@@ -1793,41 +1816,79 @@ function BracketScreen({ bracketData, setMatchMap, players, onBack, grandFinalEn
               </div>
         )}
 
-        {activeTab === "gf" && grandFinalEnabled && (
+        {/* Grand Final */}
+        {activeTab === "gf" && !isSingleElim && grandFinalEnabled && (
           <div>
-            <div style={{ fontSize: 13, fontFamily: MONO, color: GOLD, letterSpacing: "0.15em", marginBottom: 20, padding: "8px 0 8px", borderBottom: `1px solid ${GOLD}33` }}>◆ GRAND FINAL</div>
+            <div style={{ fontSize: 13, fontFamily: MONO, color: GOLD, letterSpacing: "0.15em", marginBottom: 20, padding: "8px 0", borderBottom: `1px solid ${GOLD}33` }}>◆ GRAND FINAL</div>
             <div style={{ marginBottom: 16, fontSize: 14, color: MUTED }}>WB Finalist vs LB Champion — first to lose drops out entirely.</div>
             <MatchCard matchId={grandFinalId} matchMap={matchMap} onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore} isLosers={false} isGrandFinal={true} useScoring={useScoring} scale={scale} />
             {champion && (
               <div style={{ marginTop: 28, padding: 20, background: `${GOLD}11`, border: `1px solid ${GOLD}55`, borderRadius: 12, textAlign: "center", boxShadow: `0 0 32px ${GOLD}22` }}>
-                <div style={{ fontSize: 12, fontFamily: MONO, color: GOLD, letterSpacing: "0.2em", marginBottom: 8 }}>🏆 TOURNAMENT CHAMPION</div>
+                <div style={{ fontSize: 11, fontFamily: MONO, color: GOLD, letterSpacing: "0.2em", marginBottom: 8 }}>🏆 TOURNAMENT CHAMPION</div>
                 <div style={{ fontSize: 28, fontWeight: 700, color: GOLD }}>{champion}</div>
               </div>
             )}
           </div>
         )}
 
-        {!grandFinalEnabled && champion && (
-          <div style={{ marginTop: 16, padding: 20, background: `${GOLD}11`, border: `1px solid ${GOLD}55`, borderRadius: 12, textAlign: "center", boxShadow: `0 0 32px ${GOLD}22` }}>
-            <div style={{ fontSize: 12, fontFamily: MONO, color: GOLD, letterSpacing: "0.2em", marginBottom: 8 }}>🏆 TOURNAMENT CHAMPION</div>
+        {/* Double-elim no-GF champion */}
+        {!grandFinalEnabled && !isSingleElim && champion && activeTab === "wb" && (
+          <div style={{ marginTop: 16, padding: 20, background: `${GOLD}11`, border: `1px solid ${GOLD}55`, borderRadius: 12, textAlign: "center" }}>
+            <div style={{ fontSize: 11, fontFamily: MONO, color: GOLD, letterSpacing: "0.2em", marginBottom: 8 }}>🏆 CHAMPION</div>
             <div style={{ fontSize: 28, fontWeight: 700, color: GOLD }}>{champion}</div>
           </div>
         )}
+
+        {/* Plate bracket */}
+        {activeTab === "plate" && plateData && (() => {
+          const pm = plateData.matchMap;
+          const pr = plateData.rounds || [];
+          const plateChampion = pm[plateData.finalId]?.winner;
+          return (
+            <div>
+              <div style={{ display: "flex", gap: scale.tier === "desktop" ? 48 : 32, alignItems: "flex-start" }}>
+                {pr.map((round, i) => {
+                  const isLast = i === pr.length - 1;
+                  const lbl = isLast ? "PLATE FINAL" : i === pr.length - 2 ? "SEMI FINAL" : i === pr.length - 3 ? "QTR FINAL" : `ROUND ${i + 1}`;
+                  return (
+                    <RoundCol key={i} title={lbl} matchIds={round} matchMap={pm}
+                      onPickWinner={(id, w) => setPlateMatchMap(prev => recordWinner(prev, id, w))}
+                      onChangeWinner={(id, w) => setPlateMatchMap(prev => changeWinner(prev, id, w))}
+                      onScore={(id, who, d) => setPlateMatchMap(prev => applyScoreChange(prev, id, who, d))}
+                      isLosers={false} useScoring={useScoring} scale={scale}
+                      spacing={i === 0 ? 16 : 16 * Math.pow(2, i)}
+                    />
+                  );
+                })}
+              </div>
+              {plateChampion && (
+                <div style={{ marginTop: 28, padding: 20, background: `${ORANGE}11`, border: `1px solid ${ORANGE}55`, borderRadius: 12, textAlign: "center" }}>
+                  <div style={{ fontSize: 11, fontFamily: MONO, color: ORANGE, letterSpacing: "0.2em", marginBottom: 8 }}>🥉 PLATE CHAMPION</div>
+                  <div style={{ fontSize: 28, fontWeight: 700, color: ORANGE }}>{plateChampion}</div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
+      {/* Next up bar */}
       {activeTab !== "gf" && (() => {
-        const allIds = activeTab === "wb" ? winnersRounds.flat() : losersRounds.flat();
-        const next = allIds.find(id => { const m = matchMap[id]; return m.p1 && m.p2 && !m.winner && !m.isBye; });
+        let ids = [], color = PURPLE, map = matchMap;
+        if (activeTab === "wb") { ids = winnersRounds.flat(); color = PURPLE; }
+        else if (activeTab === "lb") { ids = losersRounds.flat(); color = BLUE; }
+        else if (activeTab === "plate" && plateData) { ids = (plateData.rounds || []).flat(); color = ORANGE; map = plateData.matchMap; }
+        const next = ids.find(id => { const m = map[id]; return m && m.p1 && m.p2 && !m.winner && !m.isBye; });
         if (!next) return null;
-        const m = matchMap[next];
+        const m = map[next];
         return (
           <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: `linear-gradient(to top, ${BG} 60%, transparent)`, padding: "20px 16px 16px" }}>
             <div style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div>
-                <div style={{ fontSize: 11, fontFamily: MONO, color: activeTab === "wb" ? PURPLE : BLUE, letterSpacing: "0.1em", marginBottom: 4 }}>NEXT UP · MATCH {m.matchNum}</div>
+                <div style={{ fontSize: 11, fontFamily: MONO, color, letterSpacing: "0.1em", marginBottom: 4 }}>NEXT · MATCH {m.matchNum}</div>
                 <div style={{ fontSize: 15, fontWeight: 600 }}>{m.p1} <span style={{ color: MUTED, fontWeight: 400 }}>vs</span> {m.p2}</div>
               </div>
-              <div style={{ fontSize: 12, color: MUTED, fontFamily: MONO }}>{useScoring ? "Score above ↑" : "Tap players above ↑"}</div>
+              <div style={{ fontSize: 12, color: MUTED, fontFamily: MONO }}>{useScoring ? "Score above ↑" : "Tap above ↑"}</div>
             </div>
           </div>
         );
@@ -1841,74 +1902,67 @@ function BracketScreen({ bracketData, setMatchMap, players, onBack, grandFinalEn
 // ═══════════════════════════════════════════════════════════════════════════
 
 export default function App() {
-  // Load Inter font from Google Fonts for clean, readable typography
   useEffect(() => {
     if (!document.getElementById("inter-font")) {
       const link = document.createElement("link");
-      link.id = "inter-font";
-      link.rel = "stylesheet";
+      link.id = "inter-font"; link.rel = "stylesheet";
       link.href = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap";
       document.head.appendChild(link);
     }
   }, []);
 
-  const [screen, setScreen] = useState("loading"); // loading | setup | groups | bracket
+  const [screen, setScreen] = useState("loading");
   const [players, setPlayers] = useState([]);
   const [grandFinal, setGrandFinal] = useState(true);
   const [useScoring, setUseScoring] = useState(true);
   const [bestOf, setBestOf] = useState(3);
   const [tournamentName, setTournamentName] = useState("");
+  const [isSingleElim, setIsSingleElim] = useState(false);
 
-  const [bracketData, setBracketData] = useState(null); // single-elim WB for qualifiers
-  const [lbData, setLbData] = useState(null);            // single-elim LB for group losers
-  const [plateData, setPlateData] = useState(null);      // optional plate tournament
-  const [groupState, setGroupStateRaw] = useState(null); // { groups, matchesByGroup, advancePerGroup, useScoring, bestOf }
+  const [bracketData, setBracketData] = useState(null);
+  const [plateData, setPlateData] = useState(null);
+  const [groupState, setGroupStateRaw] = useState(null);
 
   const [savedSnapshot, setSavedSnapshot] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const saveTimer = useRef(null);
   const latestStateRef = useRef(null);
+  const tournamentIdRef = useRef(null);
 
-  // Load saved state on mount
+  const [saveStatus, setSaveStatus] = useState("idle");
+  const [saveError, setSaveError] = useState(null);
+
+  // ── Load on mount ──────────────────────────────────────────────────────
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         let parsed = null;
-        try { parsed = JSON.parse(raw); } catch (e) {
-          localStorage.removeItem(STORAGE_KEY);
-        }
-        if (parsed && (parsed.bracketData || parsed.groupState)) {
-          setSavedSnapshot(parsed);
-        }
+        try { parsed = JSON.parse(raw); } catch (e) { localStorage.removeItem(STORAGE_KEY); }
+        if (parsed && (parsed.bracketData || parsed.groupState)) setSavedSnapshot(parsed);
       }
     } catch (e) {
-      // localStorage unavailable (e.g. private browsing restrictions)
-      console.warn("Tournament: localStorage not available:", e);
+      console.warn("localStorage unavailable:", e);
     } finally {
       setScreen("setup");
     }
   }, []);
 
-  // Keep a ref of the latest persistable state so we can flush it
-  // synchronously on tab close/hide, not just on the debounce timer.
+  // ── Keep ref current ───────────────────────────────────────────────────
   useEffect(() => {
-    latestStateRef.current = { screen, players, grandFinal, useScoring, bestOf, tournamentName, bracketData, lbData, plateData, groupState };
-  }, [screen, players, grandFinal, useScoring, bestOf, tournamentName, bracketData, lbData, plateData, groupState]);
+    latestStateRef.current = { screen, players, grandFinal, useScoring, bestOf, tournamentName, isSingleElim, bracketData, plateData, groupState };
+  }, [screen, players, grandFinal, useScoring, bestOf, tournamentName, isSingleElim, bracketData, plateData, groupState]);
 
-  const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
-  const [saveError, setSaveError] = useState(null);
-  // Stable ID for the current tournament so we can upsert into history
-  const tournamentIdRef = useRef(null);
-
+  // ── Save ───────────────────────────────────────────────────────────────
   const flushSave = useCallback(() => {
     const s = latestStateRef.current;
     if (!s || s.screen === "loading" || s.screen === "setup") return;
     const snapshot = {
       screen: s.screen, players: s.players, grandFinal: s.grandFinal,
-      useScoring: s.useScoring, bestOf: s.bestOf, tournamentName: s.tournamentName || "",
+      useScoring: s.useScoring, bestOf: s.bestOf,
+      tournamentName: s.tournamentName || "",
+      isSingleElim: s.isSingleElim,
       bracketData: s.bracketData ? { ...s.bracketData } : null,
-      lbData: s.lbData ? { ...s.lbData } : null,
       plateData: s.plateData ? { ...s.plateData } : null,
       groupState: s.groupState,
       savedAt: new Date().toISOString(),
@@ -1919,58 +1973,30 @@ export default function App() {
       setSaveStatus("saved");
       setSaveError(null);
     } catch (e) {
-      const msg = e && e.message ? e.message : String(e);
       setSaveStatus("error");
-      setSaveError(msg);
+      setSaveError(e && e.message ? e.message : String(e));
     }
 
-    // Auto-save to history when the bracket has a champion
+    // Auto-save to history when champion exists
     if (s.screen === "bracket" && s.bracketData) {
       const { matchMap, winnersRounds, losersRounds, grandFinalId } = s.bracketData;
       const summary = summariseBracket(matchMap, s.players, s.grandFinal, winnersRounds, losersRounds, grandFinalId);
       if (summary && summary.champion) {
-        if (!tournamentIdRef.current) {
-          tournamentIdRef.current = `t_${Date.now()}`;
-        }
+        if (!tournamentIdRef.current) tournamentIdRef.current = `t_${Date.now()}`;
+        const groupSummary = s.groupState ? s.groupState.groups.map((g, i) => ({
+          standings: computeStandings(g, s.groupState.matchesByGroup[i] || []),
+          advance: s.groupState.advancePerGroup,
+        })) : null;
         const entry = {
           id: tournamentIdRef.current,
           name: s.tournamentName || "",
           champion: summary.champion,
-          players: summary.players,
+          players: s.groupState ? s.groupState.groups.flat() : summary.players,
           results: summary.results,
-          playerCount: (summary.players || []).length,
-          format: "Double Elimination",
+          playerCount: s.groupState ? s.groupState.groups.flat().length : (summary.players || []).length,
+          format: s.isSingleElim ? "Single Elimination" : "Double Elimination",
           bestOf: s.bestOf,
-          hasGroups: false,
-          completedAt: new Date().toISOString(),
-        };
-        saveToHistory(entry);
-      }
-    }
-
-    // Auto-save groups+bracket to history when bracket is complete
-    if (s.screen === "bracket" && s.bracketData && s.groupState) {
-      const { matchMap, winnersRounds, losersRounds, grandFinalId } = s.bracketData;
-      const summary = summariseBracket(matchMap, s.players, s.grandFinal, winnersRounds, losersRounds, grandFinalId);
-      if (summary && summary.champion) {
-        if (!tournamentIdRef.current) {
-          tournamentIdRef.current = `t_${Date.now()}`;
-        }
-        const { groups, matchesByGroup, advancePerGroup } = s.groupState;
-        const groupSummary = groups.map((g, i) => ({
-          standings: computeStandings(g, matchesByGroup[i] || []),
-          advance: advancePerGroup,
-        }));
-        const entry = {
-          id: tournamentIdRef.current,
-          name: s.tournamentName || "",
-          champion: summary.champion,
-          players: s.groupState ? groups.flat() : summary.players,
-          results: summary.results,
-          playerCount: groups.flat().length,
-          format: "Double Elimination",
-          bestOf: s.bestOf,
-          hasGroups: true,
+          hasGroups: !!s.groupState,
           groupSummary,
           completedAt: new Date().toISOString(),
         };
@@ -1979,43 +2005,60 @@ export default function App() {
     }
   }, []);
 
-  // Persist whenever core state changes (short debounce to coalesce rapid taps)
   useEffect(() => {
     if (screen === "loading" || screen === "setup") return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => { flushSave(); }, 150);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, [screen, players, grandFinal, useScoring, bestOf, tournamentName, bracketData, lbData, plateData, groupState, flushSave]);
+  }, [screen, players, grandFinal, useScoring, bestOf, tournamentName, isSingleElim, bracketData, plateData, groupState, flushSave]);
 
-  // Best-effort flush on tab hide/close
   useEffect(() => {
     const onHide = () => { flushSave(); };
     document.addEventListener("visibilitychange", onHide);
     window.addEventListener("pagehide", onHide);
-    return () => {
-      document.removeEventListener("visibilitychange", onHide);
-      window.removeEventListener("pagehide", onHide);
-    };
+    return () => { document.removeEventListener("visibilitychange", onHide); window.removeEventListener("pagehide", onHide); };
   }, [flushSave]);
 
+  // ── Setters ────────────────────────────────────────────────────────────
   const setGroupState = useCallback((updater) => {
     setGroupStateRaw(prev => typeof updater === "function" ? updater(prev) : updater);
   }, []);
 
-  const handleGenerateBracket = (names, gf, scoring, bo, name) => {
+  const setMatchMap = useCallback((updater) => {
+    setBracketData(prev => {
+      if (!prev) return prev;
+      return { ...prev, matchMap: typeof updater === "function" ? updater(prev.matchMap) : updater };
+    });
+  }, []);
+
+  const setPlateMatchMap = useCallback((updater) => {
+    setPlateData(prev => {
+      if (!prev) return prev;
+      return { ...prev, matchMap: typeof updater === "function" ? updater(prev.matchMap) : updater };
+    });
+  }, []);
+
+  // ── Generate handlers ──────────────────────────────────────────────────
+  const handleGenerateBracket = (names, gf, scoring, bo, name, elimType, platePl) => {
     tournamentIdRef.current = `t_${Date.now()}`;
-    const data = buildBracket(names, { shuffle: true, bestOf: bo });
+    const single = elimType === "single";
+    const data = single
+      ? (() => { const d = buildSingleElim(names, { shuffle: true, bestOf: bo }); return { ...d, winnersRounds: d.rounds, losersRounds: [], grandFinalId: d.finalId, prelimRound: null }; })()
+      : buildBracket(names, { shuffle: true, bestOf: bo });
+    const plate = platePl && platePl.length > 1 ? buildSingleElim(platePl, { shuffle: false, bestOf: bo }) : null;
     setPlayers(names);
     setGrandFinal(gf);
     setUseScoring(scoring);
     setBestOf(bo);
     setTournamentName(name || "");
+    setIsSingleElim(single);
     setBracketData(data);
+    setPlateData(plate);
     setGroupStateRaw(null);
     setScreen("bracket");
   };
 
-  const handleGenerateGroups = (names, groupCount, advancePerGroup, scoring, bo, gf, name) => {
+  const handleGenerateGroups = (names, groupCount, advancePerGroup, scoring, bo, gf, name, plateEn) => {
     tournamentIdRef.current = `t_${Date.now()}`;
     const groups = distributeGroups(names, groupCount);
     const matchesByGroup = {};
@@ -2025,50 +2068,25 @@ export default function App() {
     setUseScoring(scoring);
     setBestOf(bo);
     setTournamentName(name || "");
-    setGroupStateRaw({ groups, matchesByGroup, advancePerGroup, useScoring: scoring, bestOf: bo, grandFinal: gf });
+    setIsSingleElim(false);
+    setGroupStateRaw({ groups, matchesByGroup, advancePerGroup, useScoring: scoring, bestOf: bo, grandFinal: gf, plateEnabled: plateEn });
     setBracketData(null);
+    setPlateData(null);
     setScreen("groups");
   };
 
-  // Called when group stage is complete. Qualifiers → single-elim WB.
-  // Group losers → separate single-elim LB. Plate is built later if opted in.
-  const handleAdvanceToBracket = ({ qualifiers, groupLosers, plateEnabled, platePlayers }) => {
-    const wbData = buildSingleElim(qualifiers, { shuffle: true, bestOf });
-    const lb = groupLosers.length > 1 ? buildSingleElim(groupLosers, { shuffle: true, bestOf }) : null;
-    const plate = (plateEnabled && platePlayers && platePlayers.length > 1)
-      ? buildSingleElim(platePlayers, { shuffle: true, bestOf })
+  const handleAdvanceToBracket = ({ qualifiers, plateEnabled, platePlayers }) => {
+    const wrap = (d) => ({ ...d, winnersRounds: d.rounds, losersRounds: [], grandFinalId: d.finalId, prelimRound: null });
+    const wb = wrap(buildSingleElim(qualifiers, { shuffle: true, bestOf }));
+    const plate = plateEnabled && platePlayers && platePlayers.length > 1
+      ? buildSingleElim(platePlayers, { shuffle: false, bestOf })
       : null;
     setPlayers(qualifiers);
-    setBracketData(wbData);
-    setLbData(lb);
+    setIsSingleElim(true);
+    setBracketData(wb);
     setPlateData(plate);
     setScreen("bracket");
   };
-
-  // setMatchMap / setLbMatchMap / setPlateMatchMap — update nested matchMap
-  const setMatchMap = useCallback((updater) => {
-    setBracketData(prev => {
-      if (!prev) return prev;
-      const nextMap = typeof updater === "function" ? updater(prev.matchMap) : updater;
-      return { ...prev, matchMap: nextMap };
-    });
-  }, []);
-
-  const setLbMatchMap = useCallback((updater) => {
-    setLbData(prev => {
-      if (!prev) return prev;
-      const nextMap = typeof updater === "function" ? updater(prev.matchMap) : updater;
-      return { ...prev, matchMap: nextMap };
-    });
-  }, []);
-
-  const setPlateMatchMap = useCallback((updater) => {
-    setPlateData(prev => {
-      if (!prev) return prev;
-      const nextMap = typeof updater === "function" ? updater(prev.matchMap) : updater;
-      return { ...prev, matchMap: nextMap };
-    });
-  }, []);
 
   const handleResume = () => {
     if (!savedSnapshot) return;
@@ -2077,11 +2095,12 @@ export default function App() {
     setUseScoring(savedSnapshot.useScoring ?? true);
     setBestOf(savedSnapshot.bestOf ?? 3);
     setTournamentName(savedSnapshot.tournamentName || "");
+    setIsSingleElim(savedSnapshot.isSingleElim ?? false);
     setBracketData(savedSnapshot.bracketData || null);
-    setLbData(savedSnapshot.lbData || null);
     setPlateData(savedSnapshot.plateData || null);
     setGroupStateRaw(savedSnapshot.groupState || null);
-    setScreen(savedSnapshot.screen && savedSnapshot.screen !== "setup" && savedSnapshot.screen !== "loading" ? savedSnapshot.screen : "setup");
+    const s = savedSnapshot.screen;
+    setScreen(s && s !== "setup" && s !== "loading" ? s : "setup");
   };
 
   const handleDiscard = () => {
@@ -2091,6 +2110,7 @@ export default function App() {
 
   const handleBackToSetup = () => setScreen("setup");
 
+  // ── Render ─────────────────────────────────────────────────────────────
   if (screen === "loading") {
     return <div style={{ minHeight: "100vh", background: BG, color: MUTED, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15 }}>Loading…</div>;
   }
@@ -2130,14 +2150,13 @@ export default function App() {
       <BracketScreen
         bracketData={bracketData}
         setMatchMap={setMatchMap}
-        lbData={lbData}
-        setLbMatchMap={setLbMatchMap}
         plateData={plateData}
         setPlateMatchMap={setPlateMatchMap}
         players={players}
         onBack={handleBackToSetup}
         grandFinalEnabled={grandFinal}
         useScoring={useScoring}
+        isSingleElim={isSingleElim}
         saveStatus={saveStatus}
         saveError={saveError}
       />
