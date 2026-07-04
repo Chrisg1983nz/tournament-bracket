@@ -110,7 +110,7 @@ function gamesToWin(bestOf) { return Math.ceil(bestOf / 2); }
  * player counts, so the main bracket is always a clean power of 2 with no BYEs.
  */
 function buildBracket(rawPlayers, opts = {}) {
-  const { shuffle = true, bestOf = 3 } = opts;
+  const { shuffle = true, bestOf = 3, groupLosers = [] } = opts;
   const players = shuffle ? shuffleFisherYates(rawPlayers) : [...rawPlayers];
   const n = players.length;
   let mainSize = 1;
@@ -275,6 +275,18 @@ function buildBracket(rawPlayers, opts = {}) {
 
   let lbPool = [];
 
+  // Group losers from a prior group stage enter the LB directly as pre-seeded
+  // players. We create a "group loser entry" match (isBye, auto-winner = the
+  // player) so they have a fromMatch reference for the propagation system.
+  const groupLoserFeeders = (groupLosers || []).map(playerName => {
+    const id = newMatch({
+      p1: playerName, p2: "BYE",
+      isBye: true, isGroupLoserEntry: true,
+      autoWinner: playerName, winner: playerName,
+    });
+    return { fromMatch: id, isLoser: false };
+  });
+
   // LB Prelim: pair prelim losers 1:1 against an equal number of WB R1 losers.
   if (prelimLoserFeeders.length > 0) {
     const pairCount = Math.min(prelimLoserFeeders.length, wbR1LoserFeeders.length);
@@ -304,6 +316,11 @@ function buildBracket(rawPlayers, opts = {}) {
   } else {
     // No prelim round at all — standard LB starts from WB R1 losers directly.
     lbPool = [...wbR1LoserFeeders];
+  }
+
+  // Merge in any group-stage losers seeded directly into LB
+  if (groupLoserFeeders.length > 0) {
+    lbPool = [...lbPool, ...groupLoserFeeders];
   }
 
   // Reduce lbPool until its size matches the next WB round's size (so each
@@ -359,6 +376,86 @@ function buildBracket(rawPlayers, opts = {}) {
     losersRounds,
     grandFinalId: gfId,
   };
+}
+
+// ─── Single-elimination bracket (Plate tournament) ───────────────────────────
+function buildSingleElim(rawPlayers, opts = {}) {
+  const { shuffle = true, bestOf = 3 } = opts;
+  const players = shuffle ? shuffleFisherYates(rawPlayers) : [...rawPlayers];
+  const n = players.length;
+  let mainSize = 1;
+  while (mainSize < n) mainSize *= 2;
+
+  let uid = 0;
+  const newId = () => `p${++uid}`;
+  let matchNum = 1;
+  const matchMap = {};
+
+  const newMatch = (extra = {}) => {
+    const id = newId();
+    matchMap[id] = {
+      id, matchNum: matchNum++,
+      p1: null, p2: null,
+      winner: null, loser: null,
+      isBye: false, autoWinner: null,
+      p1FromMatchId: null, p2FromMatchId: null,
+      winnerGoesToMatchId: null, winnerGoesToSlot: null,
+      bestOf, p1Games: 0, p2Games: 0,
+      ...extra,
+    };
+    return id;
+  };
+
+  // Pad with BYEs to reach power-of-2
+  const seeded = [...players];
+  while (seeded.length < mainSize) seeded.push(null); // null = BYE
+
+  // Build R1
+  const r1 = [];
+  for (let i = 0; i < mainSize / 2; i++) {
+    const p1 = seeded[i];
+    const p2 = seeded[mainSize - 1 - i];
+    const isBye = !p1 || !p2;
+    const auto = isBye ? (p1 || p2) : null;
+    const id = newMatch({
+      p1: p1 || "BYE", p2: p2 || "BYE",
+      isBye, autoWinner: auto, winner: auto,
+    });
+    r1.push(id);
+  }
+
+  const rounds = [r1];
+  let prev = r1;
+  while (prev.length > 1) {
+    const round = [];
+    for (let i = 0; i < prev.length; i += 2) {
+      const id = newMatch();
+      matchMap[prev[i]].winnerGoesToMatchId   = id;
+      matchMap[prev[i]].winnerGoesToSlot      = "p1";
+      matchMap[prev[i + 1]].winnerGoesToMatchId = id;
+      matchMap[prev[i + 1]].winnerGoesToSlot    = "p2";
+      matchMap[id].p1FromMatchId = prev[i];
+      matchMap[id].p2FromMatchId = prev[i + 1];
+      // Pre-populate if previous round was BYE
+      if (matchMap[prev[i]].autoWinner) matchMap[id].p1 = matchMap[prev[i]].autoWinner;
+      if (matchMap[prev[i + 1]].autoWinner) matchMap[id].p2 = matchMap[prev[i + 1]].autoWinner;
+      // Auto-resolve this match if both inputs are known from BYEs
+      if (matchMap[id].p1 && matchMap[id].p2 === "BYE") {
+        matchMap[id].winner = matchMap[id].p1;
+        matchMap[id].isBye = true;
+        matchMap[id].autoWinner = matchMap[id].p1;
+      } else if (matchMap[id].p2 && matchMap[id].p1 === "BYE") {
+        matchMap[id].winner = matchMap[id].p2;
+        matchMap[id].isBye = true;
+        matchMap[id].autoWinner = matchMap[id].p2;
+      }
+      round.push(id);
+    }
+    rounds.push(round);
+    prev = round;
+  }
+
+  return { matchMap, rounds, finalId: prev[0] };
 }
 
 // ─── State engine: record / undo a result ────────────────────────────────────
@@ -1488,6 +1585,92 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PLATE SCREEN (single-elimination)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function PlateScreen({ plateData, setPlateMatchMap, onBack, useScoring, saveStatus, saveError }) {
+  const { matchMap, rounds, finalId } = plateData;
+  const scale = useViewportScale();
+
+  const handlePick = useCallback((matchId, winner) => {
+    setPlateMatchMap(prev => recordWinner(prev, matchId, winner));
+  }, [setPlateMatchMap]);
+
+  const handleChangeWinner = useCallback((matchId, newWinner) => {
+    setPlateMatchMap(prev => changeWinner(prev, matchId, newWinner));
+  }, [setPlateMatchMap]);
+
+  const handleScore = useCallback((matchId, who, delta) => {
+    setPlateMatchMap(prev => applyScoreChange(prev, matchId, who, delta));
+  }, [setPlateMatchMap]);
+
+  const totalMatches = Object.values(matchMap).filter(m => !m.isBye).length;
+  const doneCount    = Object.values(matchMap).filter(m => m.winner && !m.isBye).length;
+  const champion     = matchMap[finalId]?.winner;
+
+  const roundLabel = (i, total) => {
+    if (i === total - 1) return "PLATE FINAL";
+    if (i === total - 2) return "SEMI FINAL";
+    if (i === total - 3) return "QTR FINAL";
+    return `ROUND ${i + 1}`;
+  };
+
+  const ORANGE = "#FB923C";
+
+  return (
+    <div style={{ minHeight: "100vh", background: BG, color: TEXT, fontFamily: FONT }}>
+      <div style={{ background: CARD, borderBottom: `1px solid ${BORDER}`, padding: "14px 16px", position: "sticky", top: 0, zIndex: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button onClick={onBack} style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT, padding: "6px 12px", cursor: "pointer", fontSize: 15, fontFamily: "inherit", flexShrink: 0 }}>← Back</button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: ORANGE, letterSpacing: "0.06em", textTransform: "uppercase" }}>Plate Tournament</div>
+            <div style={{ fontSize: 17, fontWeight: 700 }}>Single Elimination · {doneCount}/{totalMatches} matches</div>
+          </div>
+          {champion && (
+            <div style={{ flexShrink: 0, textAlign: "right" }}>
+              <div style={{ fontSize: 10, fontFamily: MONO, color: ORANGE, letterSpacing: "0.1em" }}>PLATE WINNER</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: ORANGE, maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{champion}</div>
+            </div>
+          )}
+        </div>
+        <div style={{ marginTop: 10, height: 3, background: BORDER, borderRadius: 2 }}>
+          <div style={{ height: "100%", borderRadius: 2, background: ORANGE, width: `${totalMatches ? (doneCount / totalMatches) * 100 : 0}%`, transition: "width 0.3s" }} />
+        </div>
+        <div style={{ marginTop: 6 }}><SaveBadge status={saveStatus} error={saveError} /></div>
+      </div>
+
+      <div style={{ overflowX: "auto", padding: "20px 16px 120px" }}>
+        <div style={{ display: "flex", gap: scale.tier === "desktop" ? 48 : 32, alignItems: "flex-start" }}>
+          {rounds.map((round, i) => (
+            <RoundCol
+              key={i}
+              title={roundLabel(i, rounds.length)}
+              matchIds={round}
+              matchMap={matchMap}
+              onPickWinner={handlePick}
+              onChangeWinner={handleChangeWinner}
+              onScore={handleScore}
+              isLosers={false}
+              isGrandFinal={i === rounds.length - 1}
+              useScoring={useScoring}
+              scale={scale}
+              spacing={i === 0 ? 16 : 16 * Math.pow(2, i)}
+            />
+          ))}
+        </div>
+
+        {champion && (
+          <div style={{ marginTop: 32, padding: 20, background: `${ORANGE}11`, border: `1px solid ${ORANGE}55`, borderRadius: 12, textAlign: "center", boxShadow: `0 0 32px ${ORANGE}22` }}>
+            <div style={{ fontSize: 11, fontFamily: MONO, color: ORANGE, letterSpacing: "0.2em", marginBottom: 8 }}>🥉 PLATE WINNER</div>
+            <div style={{ fontSize: 28, fontWeight: 700, color: ORANGE }}>{champion}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // BRACKET SCREEN
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1676,7 +1859,9 @@ export default function App() {
   const [bestOf, setBestOf] = useState(3);
   const [tournamentName, setTournamentName] = useState("");
 
-  const [bracketData, setBracketData] = useState(null); // { matchMap, winnersRounds, losersRounds, grandFinalId, prelimRound }
+  const [bracketData, setBracketData] = useState(null); // single-elim WB for qualifiers
+  const [lbData, setLbData] = useState(null);            // single-elim LB for group losers
+  const [plateData, setPlateData] = useState(null);      // optional plate tournament
   const [groupState, setGroupStateRaw] = useState(null); // { groups, matchesByGroup, advancePerGroup, useScoring, bestOf }
 
   const [savedSnapshot, setSavedSnapshot] = useState(null);
@@ -1708,8 +1893,8 @@ export default function App() {
   // Keep a ref of the latest persistable state so we can flush it
   // synchronously on tab close/hide, not just on the debounce timer.
   useEffect(() => {
-    latestStateRef.current = { screen, players, grandFinal, useScoring, bestOf, tournamentName, bracketData, groupState };
-  }, [screen, players, grandFinal, useScoring, bestOf, tournamentName, bracketData, groupState]);
+    latestStateRef.current = { screen, players, grandFinal, useScoring, bestOf, tournamentName, bracketData, lbData, plateData, groupState };
+  }, [screen, players, grandFinal, useScoring, bestOf, tournamentName, bracketData, lbData, plateData, groupState]);
 
   const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
   const [saveError, setSaveError] = useState(null);
@@ -1723,6 +1908,8 @@ export default function App() {
       screen: s.screen, players: s.players, grandFinal: s.grandFinal,
       useScoring: s.useScoring, bestOf: s.bestOf, tournamentName: s.tournamentName || "",
       bracketData: s.bracketData ? { ...s.bracketData } : null,
+      lbData: s.lbData ? { ...s.lbData } : null,
+      plateData: s.plateData ? { ...s.plateData } : null,
       groupState: s.groupState,
       savedAt: new Date().toISOString(),
     };
@@ -1798,7 +1985,7 @@ export default function App() {
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => { flushSave(); }, 150);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, [screen, players, grandFinal, useScoring, bestOf, tournamentName, bracketData, groupState, flushSave]);
+  }, [screen, players, grandFinal, useScoring, bestOf, tournamentName, bracketData, lbData, plateData, groupState, flushSave]);
 
   // Best-effort flush on tab hide/close
   useEffect(() => {
@@ -1813,14 +2000,6 @@ export default function App() {
 
   const setGroupState = useCallback((updater) => {
     setGroupStateRaw(prev => typeof updater === "function" ? updater(prev) : updater);
-  }, []);
-
-  const setMatchMap = useCallback((updater) => {
-    setBracketData(prev => {
-      if (!prev) return prev;
-      const nextMap = typeof updater === "function" ? updater(prev.matchMap) : updater;
-      return { ...prev, matchMap: nextMap };
-    });
   }, []);
 
   const handleGenerateBracket = (names, gf, scoring, bo, name) => {
@@ -1851,12 +2030,45 @@ export default function App() {
     setScreen("groups");
   };
 
-  const handleAdvanceToBracket = (qualifiers) => {
-    const data = buildBracket(qualifiers, { shuffle: true, bestOf });
+  // Called when group stage is complete. Qualifiers → single-elim WB.
+  // Group losers → separate single-elim LB. Plate is built later if opted in.
+  const handleAdvanceToBracket = ({ qualifiers, groupLosers, plateEnabled, platePlayers }) => {
+    const wbData = buildSingleElim(qualifiers, { shuffle: true, bestOf });
+    const lb = groupLosers.length > 1 ? buildSingleElim(groupLosers, { shuffle: true, bestOf }) : null;
+    const plate = (plateEnabled && platePlayers && platePlayers.length > 1)
+      ? buildSingleElim(platePlayers, { shuffle: true, bestOf })
+      : null;
     setPlayers(qualifiers);
-    setBracketData(data);
+    setBracketData(wbData);
+    setLbData(lb);
+    setPlateData(plate);
     setScreen("bracket");
   };
+
+  // setMatchMap / setLbMatchMap / setPlateMatchMap — update nested matchMap
+  const setMatchMap = useCallback((updater) => {
+    setBracketData(prev => {
+      if (!prev) return prev;
+      const nextMap = typeof updater === "function" ? updater(prev.matchMap) : updater;
+      return { ...prev, matchMap: nextMap };
+    });
+  }, []);
+
+  const setLbMatchMap = useCallback((updater) => {
+    setLbData(prev => {
+      if (!prev) return prev;
+      const nextMap = typeof updater === "function" ? updater(prev.matchMap) : updater;
+      return { ...prev, matchMap: nextMap };
+    });
+  }, []);
+
+  const setPlateMatchMap = useCallback((updater) => {
+    setPlateData(prev => {
+      if (!prev) return prev;
+      const nextMap = typeof updater === "function" ? updater(prev.matchMap) : updater;
+      return { ...prev, matchMap: nextMap };
+    });
+  }, []);
 
   const handleResume = () => {
     if (!savedSnapshot) return;
@@ -1866,6 +2078,8 @@ export default function App() {
     setBestOf(savedSnapshot.bestOf ?? 3);
     setTournamentName(savedSnapshot.tournamentName || "");
     setBracketData(savedSnapshot.bracketData || null);
+    setLbData(savedSnapshot.lbData || null);
+    setPlateData(savedSnapshot.plateData || null);
     setGroupStateRaw(savedSnapshot.groupState || null);
     setScreen(savedSnapshot.screen && savedSnapshot.screen !== "setup" && savedSnapshot.screen !== "loading" ? savedSnapshot.screen : "setup");
   };
@@ -1875,17 +2089,13 @@ export default function App() {
     setSavedSnapshot(null);
   };
 
-  const handleBackToSetup = () => {
-    setScreen("setup");
-  };
+  const handleBackToSetup = () => setScreen("setup");
 
   if (screen === "loading") {
     return <div style={{ minHeight: "100vh", background: BG, color: MUTED, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15 }}>Loading…</div>;
   }
 
-  if (screen === "history") {
-    return <HistoryScreen onBack={handleBackToSetup} />;
-  }
+  if (screen === "history") return <HistoryScreen onBack={handleBackToSetup} />;
 
   if (screen === "setup") {
     return (
@@ -1920,6 +2130,10 @@ export default function App() {
       <BracketScreen
         bracketData={bracketData}
         setMatchMap={setMatchMap}
+        lbData={lbData}
+        setLbMatchMap={setLbMatchMap}
+        plateData={plateData}
+        setPlateMatchMap={setPlateMatchMap}
         players={players}
         onBack={handleBackToSetup}
         grandFinalEnabled={grandFinal}
