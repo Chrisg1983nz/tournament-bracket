@@ -1278,85 +1278,6 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
         </div>
 
         <div style={{ padding: "24px 20px 0" }}>
-          {/* Player count */}
-          <div style={{ marginBottom: 28 }}>
-            <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Number of Players</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-              {["-", "+"].map((sym, di) => (
-                <button key={sym} onClick={() => updateCount(count + (di ? 1 : -1))} style={{
-                  width: scale.tier === "desktop" ? 52 : 44, height: scale.tier === "desktop" ? 52 : 44,
-                  background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10,
-                  color: TEXT, fontSize: scale.tier === "desktop" ? 26 : 22, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-                }}>{sym}</button>
-              ))}
-              <div style={{ flex: 1, textAlign: "center", fontSize: 38, fontWeight: 700, color: GOLD, fontFamily: MONO }}>{count}</div>
-            </div>
-
-            {mode === "bracket" && (
-              <div style={{ marginTop: 10, fontSize: 12, color: perfect ? GREEN : MUTED, textAlign: "center", fontFamily: MONO }}>
-                {perfect ? "Perfect bracket — no prelim needed" : (() => {
-                  let mainSz = 1;
-                  while (mainSz * 2 <= count) mainSz *= 2;
-                  const ov = count - mainSz;
-                  const prelims = Math.ceil(ov / 2);
-                  return `Prelim round: ${prelims} match${prelims > 1 ? "es" : ""} → ${mainSz}-player bracket`;
-                })()}
-              </div>
-            )}
-          </div>
-
-          {/* Group settings */}
-          {mode === "groups" && (
-            <div style={{ marginBottom: 28 }}>
-              <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Groups</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 10 }}>
-                {["-", "+"].map((sym, di) => (
-                  <button key={sym} onClick={() => { setGroupsTouched(true); setGroupCount(g => Math.max(1, Math.min(count, g + (di ? 1 : -1)))); }} style={{
-                    width: 40, height: 40, background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10,
-                    color: TEXT, fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-                  }}>{sym}</button>
-                ))}
-                <div style={{ flex: 1, textAlign: "center", fontSize: 28, fontWeight: 700, color: PURPLE, fontFamily: MONO }}>{effectiveGroupCount}</div>
-              </div>
-              <div style={{ fontSize: 12, color: MUTED, textAlign: "center", fontFamily: MONO, marginBottom: 16 }}>
-                Sizes: {groupSizes.join(", ")}
-              </div>
-
-              <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 10, textTransform: "uppercase" }}>Advance Per Group</div>
-              <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-                {[1, 2, 3, 4].map(v => (
-                  <button key={v} onClick={() => setAdvancePerGroup(v)} style={{
-                    flex: 1, padding: "10px 0", borderRadius: 10,
-                    border: `1px solid ${advancePerGroup === v ? PURPLE : BORDER}`,
-                    background: advancePerGroup === v ? `${PURPLE}22` : CARD2,
-                    color: advancePerGroup === v ? PURPLE : MUTED,
-                    fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit",
-                  }}>Top {v}</button>
-                ))}
-              </div>
-              <div style={{ fontSize: 12, color: MUTED, textAlign: "center", fontFamily: MONO }}>
-                {qualifierCount} qualifiers → {resultingBracketSize}-player bracket
-              </div>
-            </div>
-          )}
-
-          {/* Player names */}
-          <div style={{ marginBottom: 28 }}>
-            <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Player Names</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {names.map((name, i) => (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ width: 28, height: 28, borderRadius: 6, background: CARD2, border: `1px solid ${BORDER}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontFamily: MONO, color: MUTED, flexShrink: 0 }}>{i + 1}</div>
-                  <input
-                    value={name}
-                    onChange={e => { const n = [...names]; n[i] = e.target.value; setNames(n); }}
-                    placeholder={`Player ${i + 1}`}
-                    style={{ flex: 1, background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "10px 14px", color: TEXT, fontSize: 16, outline: "none", fontFamily: "inherit" }}
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
 
           {/* Scoring */}
           <div style={{ marginBottom: 20 }}>
@@ -1423,7 +1344,7 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
           )}
 
           {/* Plate tournament */}
-          <div style={{ marginBottom: 20 }}>
+          <div style={{ marginBottom: 24 }}>
             <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Plate Tournament</div>
             <div onClick={() => setPlateEnabled(v => !v)} style={{
               display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -1433,12 +1354,90 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
               <div>
                 <div style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>Enable Plate</div>
                 <div style={{ fontSize: 12, color: MUTED, marginTop: 3 }}>
-                  Single-elim bracket running alongside the main tournament — add players once the tournament is underway.
+                  Single-elim bracket running alongside — add players once the tournament is underway.
                 </div>
               </div>
               <div style={{ width: 44, height: 26, borderRadius: 13, background: plateEnabled ? "#FB923C" : BORDER, position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
                 <div style={{ position: "absolute", top: 4, left: plateEnabled ? 22 : 4, width: 18, height: 18, borderRadius: 9, background: "#fff", transition: "left 0.2s" }} />
               </div>
+            </div>
+          </div>
+
+          {/* Group settings */}
+          {mode === "groups" && (
+            <div style={{ marginBottom: 28 }}>
+              <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Groups</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 10 }}>
+                {["-", "+"].map((sym, di) => (
+                  <button key={sym} onClick={() => { setGroupsTouched(true); setGroupCount(g => Math.max(1, Math.min(count, g + (di ? 1 : -1)))); }} style={{
+                    width: 40, height: 40, background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10,
+                    color: TEXT, fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>{sym}</button>
+                ))}
+                <div style={{ flex: 1, textAlign: "center", fontSize: 28, fontWeight: 700, color: PURPLE, fontFamily: MONO }}>{effectiveGroupCount}</div>
+              </div>
+              <div style={{ fontSize: 12, color: MUTED, textAlign: "center", fontFamily: MONO, marginBottom: 16 }}>
+                Sizes: {groupSizes.join(", ")}
+              </div>
+              <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 10, textTransform: "uppercase" }}>Advance Per Group</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                {[1, 2, 3, 4].map(v => (
+                  <button key={v} onClick={() => setAdvancePerGroup(v)} style={{
+                    flex: 1, padding: "10px 0", borderRadius: 10,
+                    border: `1px solid ${advancePerGroup === v ? PURPLE : BORDER}`,
+                    background: advancePerGroup === v ? `${PURPLE}22` : CARD2,
+                    color: advancePerGroup === v ? PURPLE : MUTED,
+                    fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit",
+                  }}>Top {v}</button>
+                ))}
+              </div>
+              <div style={{ fontSize: 12, color: MUTED, textAlign: "center", fontFamily: MONO }}>
+                {qualifierCount} qualifiers → {resultingBracketSize}-player bracket
+              </div>
+            </div>
+          )}
+
+          {/* Player count */}
+          <div style={{ marginBottom: 28 }}>
+            <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Number of Players</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+              {["-", "+"].map((sym, di) => (
+                <button key={sym} onClick={() => updateCount(count + (di ? 1 : -1))} style={{
+                  width: scale.tier === "desktop" ? 52 : 44, height: scale.tier === "desktop" ? 52 : 44,
+                  background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10,
+                  color: TEXT, fontSize: scale.tier === "desktop" ? 26 : 22, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                }}>{sym}</button>
+              ))}
+              <div style={{ flex: 1, textAlign: "center", fontSize: 38, fontWeight: 700, color: GOLD, fontFamily: MONO }}>{count}</div>
+            </div>
+            {mode === "bracket" && (
+              <div style={{ marginTop: 10, fontSize: 12, color: perfect ? GREEN : MUTED, textAlign: "center", fontFamily: MONO }}>
+                {perfect ? "Perfect bracket — no prelim needed" : (() => {
+                  let mainSz = 1;
+                  while (mainSz * 2 <= count) mainSz *= 2;
+                  const ov = count - mainSz;
+                  const prelims = Math.ceil(ov / 2);
+                  return `Prelim round: ${prelims} match${prelims > 1 ? "es" : ""} → ${mainSz}-player bracket`;
+                })()}
+              </div>
+            )}
+          </div>
+
+          {/* Player names */}
+          <div style={{ marginBottom: 28 }}>
+            <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Player Names</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {names.map((name, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 28, height: 28, borderRadius: 6, background: CARD2, border: `1px solid ${BORDER}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontFamily: MONO, color: MUTED, flexShrink: 0 }}>{i + 1}</div>
+                  <input
+                    value={name}
+                    onChange={e => { const n = [...names]; n[i] = e.target.value; setNames(n); }}
+                    placeholder={`Player ${i + 1}`}
+                    style={{ flex: 1, background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10, padding: "10px 14px", color: TEXT, fontSize: 16, outline: "none", fontFamily: "inherit" }}
+                  />
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -1719,6 +1718,15 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
   ];
 
   const [activeTab, setActiveTab] = useState("wb");
+  const [showCloseOut, setShowCloseOut] = useState(false);
+
+  // Detect other brackets still in progress
+  const lbChampion = !isSingleElim
+    ? (grandFinalEnabled ? matchMap[grandFinalId]?.winner : matchMap[wbFinalId]?.winner)
+    : null; // same as champion for double-elim
+  const plateChampionCheck = plateData ? plateData.matchMap[plateData.finalId]?.winner : null;
+  const plateInProgress = plateData && !plateChampionCheck;
+  const lbInProgress = !isSingleElim && !champion; // LB/GF still going while WB done
 
   const wbLabel = (i, total) => {
     if (prelimRound && i === 0) return "WB PRELIM";
@@ -1940,6 +1948,68 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
           </div>
         );
       })()}
+
+      {/* Close out tournament button — appears when main bracket has a champion */}
+      {champion && !showCloseOut && (
+        <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: `linear-gradient(to top, ${BG} 70%, transparent)`, padding: "20px 16px 16px" }}>
+          <button
+            onClick={() => setShowCloseOut(true)}
+            style={{ width: "100%", padding: "16px", background: GOLD, border: "none", borderRadius: 14, color: "#0D0F14", fontSize: 16, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.02em" }}
+          >
+            🏆 Close Out Tournament
+          </button>
+        </div>
+      )}
+
+      {/* Close-out overlay */}
+      {showCloseOut && (
+        <div style={{ position: "fixed", inset: 0, background: BG, zIndex: 300, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "32px 24px" }}>
+          {/* Confetti-like accent */}
+          <div style={{ position: "absolute", inset: 0, background: `radial-gradient(ellipse at 50% 30%, ${GOLD}18 0%, transparent 70%)`, pointerEvents: "none" }} />
+
+          <div style={{ position: "relative", textAlign: "center", maxWidth: 400, width: "100%" }}>
+            <div style={{ fontSize: 72, marginBottom: 8 }}>🏆</div>
+            <div style={{ fontSize: 13, fontFamily: MONO, color: GOLD, letterSpacing: "0.2em", marginBottom: 12, textTransform: "uppercase" }}>Tournament Champion</div>
+            <div style={{ fontSize: 36, fontWeight: 700, color: GOLD, marginBottom: 8, lineHeight: 1.1 }}>{champion}</div>
+
+            {/* Show other bracket winners too if complete */}
+            {plateChampionCheck && (
+              <div style={{ marginTop: 20, padding: "12px 16px", background: `#FB923C11`, border: `1px solid #FB923C44`, borderRadius: 12 }}>
+                <div style={{ fontSize: 11, fontFamily: MONO, color: "#FB923C", letterSpacing: "0.15em", marginBottom: 4 }}>🥉 PLATE CHAMPION</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: "#FB923C" }}>{plateChampionCheck}</div>
+              </div>
+            )}
+
+            <div style={{ marginTop: 36, display: "flex", flexDirection: "column", gap: 10 }}>
+              {/* Navigate to in-progress brackets */}
+              {plateInProgress && (
+                <button
+                  onClick={() => { setShowCloseOut(false); setActiveTab("plate"); }}
+                  style={{ width: "100%", padding: "14px", background: "#FB923C22", border: `1px solid #FB923C`, borderRadius: 12, color: "#FB923C", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+                >
+                  Continue to Plate Tournament →
+                </button>
+              )}
+              {!isSingleElim && lbInProgress && (
+                <button
+                  onClick={() => { setShowCloseOut(false); setActiveTab("lb"); }}
+                  style={{ width: "100%", padding: "14px", background: `${BLUE}22`, border: `1px solid ${BLUE}`, borderRadius: 12, color: BLUE, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+                >
+                  Continue to Losers Bracket →
+                </button>
+              )}
+
+              {/* Close / dismiss */}
+              <button
+                onClick={() => setShowCloseOut(false)}
+                style={{ width: "100%", padding: "14px", background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, color: TEXT, fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}
+              >
+                Back to Bracket
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
