@@ -784,7 +784,7 @@ function pipBtnStyle(plus, s) {
 }
 
 // ─── MatchCard ────────────────────────────────────────────────────────────────
-function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, isLosers, isGrandFinal, useScoring, scale }) {
+function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, isLosers, isGrandFinal, useScoring, scale, editingMatchId, setEditingMatchId, readOnly }) {
   const m = matchMap[matchId];
   const accent = isGrandFinal ? GOLD : isLosers ? BLUE : PURPLE;
   const s = scale || { tier: "mobile", cardWidth: 170, pip: 9, btn: 18, btnFont: 12 };
@@ -801,7 +801,9 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
     : isLosers ? `LB · MATCH ${m.matchNum}`
     : `MATCH ${m.matchNum}`;
 
-  const [editing, setEditing] = useState(false);
+  // editing state is lifted to parent so it survives tab switches
+  const editing = editingMatchId === matchId;
+  const setEditing = (v) => setEditingMatchId && setEditingMatchId(v ? matchId : null);
 
   return (
     <div style={{
@@ -830,12 +832,15 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
       }}>
         <span>{headerLabel}</span>
         {ready && !useScoring && <span style={{ color: MUTED, fontSize: 11 }}>TAP TO PICK</span>}
-        {settled && !editing && (
+        {settled && !editing && !readOnly && (
           <span
             onClick={(e) => { e.stopPropagation(); setEditing(true); }}
             style={{ fontSize: 11, color: GREEN, cursor: "pointer", textDecoration: "underline dotted" }}
             title="Change winner"
           >✓ DONE · EDIT</span>
+        )}
+        {settled && !editing && readOnly && (
+          <span style={{ fontSize: 11, color: GREEN }}>✓ DONE</span>
         )}
         {settled && editing && (
           <span
@@ -849,7 +854,7 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
         const fromLabel = !player ? slotLabel(matchMap, matchId, slot) : null;
         const isWinner  = settled && m.winner === player;
         const isLoserP  = settled && m.loser === player;
-        const canTap    = (ready || (settled && editing)) && !!player && player !== "BYE";
+        const canTap    = !readOnly && (ready || (settled && editing)) && !!player && player !== "BYE";
 
         return (
           <div
@@ -936,7 +941,7 @@ function SaveBadge({ status, error }) {
   );
 }
 
-function RoundCol({ title, matchIds, matchMap, onPickWinner, onChangeWinner, onScore, isLosers, isGrandFinal, spacing, useScoring, scale }) {
+function RoundCol({ title, matchIds, matchMap, onPickWinner, onChangeWinner, onScore, isLosers, isGrandFinal, spacing, useScoring, scale, editingMatchId, setEditingMatchId, readOnly }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", flexShrink: 0 }}>
       <div style={{
@@ -955,12 +960,14 @@ function RoundCol({ title, matchIds, matchMap, onPickWinner, onChangeWinner, onS
             key={id} matchId={id} matchMap={matchMap}
             onPickWinner={onPickWinner} onChangeWinner={onChangeWinner} onScore={onScore}
             isLosers={isLosers} isGrandFinal={isGrandFinal} useScoring={useScoring} scale={scale}
+            editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={readOnly}
           />
         ))}
       </div>
     </div>
   );
 }
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SETUP SCREEN
@@ -1719,14 +1726,48 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
 
   const [activeTab, setActiveTab] = useState("wb");
   const [showCloseOut, setShowCloseOut] = useState(false);
+  const [editingMatchId, setEditingMatchId] = useState(null); // lifted from MatchCard so it survives tab switches
+  const [closedBrackets, setClosedBrackets] = useState({}); // { wb: bool, lb: bool, plate: bool }
 
-  // Detect other brackets still in progress
-  const lbChampion = !isSingleElim
-    ? (grandFinalEnabled ? matchMap[grandFinalId]?.winner : matchMap[wbFinalId]?.winner)
-    : null; // same as champion for double-elim
+  // Which brackets are done
   const plateChampionCheck = plateData ? plateData.matchMap[plateData.finalId]?.winner : null;
   const plateInProgress = plateData && !plateChampionCheck;
-  const lbInProgress = !isSingleElim && !champion; // LB/GF still going while WB done
+  const plateComplete = plateData && !!plateChampionCheck;
+
+  // Current tab's bracket is locked if it's been closed out
+  const currentTabClosed = closedBrackets[activeTab] || false;
+
+  // Figure out if the current tab has a winner to show the close-out button for
+  const currentTabChampion = (() => {
+    if (activeTab === "wb" || activeTab === "gf") return champion;
+    if (activeTab === "plate") return plateChampionCheck;
+    return null;
+  })();
+
+  // How many brackets still have active matches (not yet closed out)
+  const activeBrackets = [
+    champion && !closedBrackets.wb ? "wb" : null,
+    plateComplete && !closedBrackets.plate ? "plate" : null,
+  ].filter(Boolean);
+
+  const isLastBracket = activeBrackets.length <= 1;
+
+  const handleCloseOut = () => {
+    // Mark current tab as closed
+    setClosedBrackets(prev => ({ ...prev, [activeTab]: true }));
+    setShowCloseOut(true);
+  };
+
+  const handleCloseOutDismiss = () => {
+    setShowCloseOut(false);
+    // Navigate to next in-progress bracket if any
+    const remaining = [
+      !closedBrackets.wb && champion ? "wb" : null,
+      !closedBrackets.plate && plateComplete ? "plate" : null,
+      plateInProgress ? "plate" : null,
+    ].filter(Boolean).find(t => t !== activeTab);
+    if (remaining) setActiveTab(remaining);
+  };
 
   const wbLabel = (i, total) => {
     if (prelimRound && i === 0) return "WB PRELIM";
@@ -1845,6 +1886,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
               <RoundCol key={i} title={wbLabel(i, allWbRounds.length)} matchIds={round} matchMap={matchMap}
                 onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
                 isLosers={false} useScoring={useScoring} scale={scale}
+                editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.wb}
                 spacing={i === 0 ? 16 : 16 * Math.pow(2, Math.max(0, i - (prelimRound ? 1 : 0)))}
               />
             ))}
@@ -1866,6 +1908,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                   <RoundCol key={i} title={lbLabel(i)} matchIds={round} matchMap={matchMap}
                     onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
                     isLosers={true} useScoring={useScoring} spacing={16} scale={scale}
+                    editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.lb}
                   />
                 ))}
               </div>
@@ -1876,7 +1919,8 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
           <div>
             <div style={{ fontSize: 13, fontFamily: MONO, color: GOLD, letterSpacing: "0.15em", marginBottom: 20, padding: "8px 0", borderBottom: `1px solid ${GOLD}33` }}>◆ GRAND FINAL</div>
             <div style={{ marginBottom: 16, fontSize: 14, color: MUTED }}>WB Finalist vs LB Champion — first to lose drops out entirely.</div>
-            <MatchCard matchId={grandFinalId} matchMap={matchMap} onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore} isLosers={false} isGrandFinal={true} useScoring={useScoring} scale={scale} />
+            <MatchCard matchId={grandFinalId} matchMap={matchMap} onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore} isLosers={false} isGrandFinal={true} useScoring={useScoring} scale={scale}
+              editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.wb} />
             {champion && (
               <div style={{ marginTop: 28, padding: 20, background: `${GOLD}11`, border: `1px solid ${GOLD}55`, borderRadius: 12, textAlign: "center", boxShadow: `0 0 32px ${GOLD}22` }}>
                 <div style={{ fontSize: 11, fontFamily: MONO, color: GOLD, letterSpacing: "0.2em", marginBottom: 8 }}>🏆 TOURNAMENT CHAMPION</div>
@@ -1911,6 +1955,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                       onChangeWinner={(id, w) => setPlateMatchMap(prev => changeWinner(prev, id, w))}
                       onScore={(id, who, d) => setPlateMatchMap(prev => applyScoreChange(prev, id, who, d))}
                       isLosers={false} useScoring={useScoring} scale={scale}
+                      editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.plate}
                       spacing={i === 0 ? 16 : 16 * Math.pow(2, i)}
                     />
                   );
@@ -1949,14 +1994,14 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
         );
       })()}
 
-      {/* Close out tournament button — appears when main bracket has a champion */}
-      {champion && !showCloseOut && (
+      {/* Close out button — show for current tab's bracket when it has a champion and isn't already closed */}
+      {currentTabChampion && !currentTabClosed && !showCloseOut && (
         <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: `linear-gradient(to top, ${BG} 70%, transparent)`, padding: "20px 16px 16px" }}>
           <button
-            onClick={() => setShowCloseOut(true)}
+            onClick={handleCloseOut}
             style={{ width: "100%", padding: "16px", background: GOLD, border: "none", borderRadius: 14, color: "#0D0F14", fontSize: 16, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.02em" }}
           >
-            🏆 Close Out Tournament
+            {activeTab === "plate" ? "🥉 Close Out Plate" : "🏆 Close Out Tournament"}
           </button>
         </div>
       )}
@@ -1964,48 +2009,61 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
       {/* Close-out overlay */}
       {showCloseOut && (
         <div style={{ position: "fixed", inset: 0, background: BG, zIndex: 300, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "32px 24px" }}>
-          {/* Confetti-like accent */}
-          <div style={{ position: "absolute", inset: 0, background: `radial-gradient(ellipse at 50% 30%, ${GOLD}18 0%, transparent 70%)`, pointerEvents: "none" }} />
+          <div style={{ position: "absolute", inset: 0, background: `radial-gradient(ellipse at 50% 30%, ${activeTab === "plate" ? "#FB923C18" : GOLD + "18"} 0%, transparent 70%)`, pointerEvents: "none" }} />
 
           <div style={{ position: "relative", textAlign: "center", maxWidth: 400, width: "100%" }}>
-            <div style={{ fontSize: 72, marginBottom: 8 }}>🏆</div>
-            <div style={{ fontSize: 13, fontFamily: MONO, color: GOLD, letterSpacing: "0.2em", marginBottom: 12, textTransform: "uppercase" }}>Tournament Champion</div>
-            <div style={{ fontSize: 36, fontWeight: 700, color: GOLD, marginBottom: 8, lineHeight: 1.1 }}>{champion}</div>
-
-            {/* Show other bracket winners too if complete */}
-            {plateChampionCheck && (
-              <div style={{ marginTop: 20, padding: "12px 16px", background: `#FB923C11`, border: `1px solid #FB923C44`, borderRadius: 12 }}>
-                <div style={{ fontSize: 11, fontFamily: MONO, color: "#FB923C", letterSpacing: "0.15em", marginBottom: 4 }}>🥉 PLATE CHAMPION</div>
-                <div style={{ fontSize: 20, fontWeight: 700, color: "#FB923C" }}>{plateChampionCheck}</div>
-              </div>
-            )}
+            <div style={{ fontSize: 72, marginBottom: 8 }}>{activeTab === "plate" ? "🥉" : "🏆"}</div>
+            <div style={{ fontSize: 13, fontFamily: MONO, color: activeTab === "plate" ? ORANGE : GOLD, letterSpacing: "0.2em", marginBottom: 12, textTransform: "uppercase" }}>
+              {activeTab === "plate" ? "Plate Champion" : "Tournament Champion"}
+            </div>
+            <div style={{ fontSize: 36, fontWeight: 700, color: activeTab === "plate" ? ORANGE : GOLD, marginBottom: 8, lineHeight: 1.1 }}>
+              {currentTabChampion}
+            </div>
 
             <div style={{ marginTop: 36, display: "flex", flexDirection: "column", gap: 10 }}>
-              {/* Navigate to in-progress brackets */}
-              {plateInProgress && (
+              {isLastBracket ? (
+                // Last bracket — go back to setup
                 <button
-                  onClick={() => { setShowCloseOut(false); setActiveTab("plate"); }}
-                  style={{ width: "100%", padding: "14px", background: "#FB923C22", border: `1px solid #FB923C`, borderRadius: 12, color: "#FB923C", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+                  onClick={onBack}
+                  style={{ width: "100%", padding: "16px", background: GOLD, border: "none", borderRadius: 12, color: "#0D0F14", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
                 >
-                  Continue to Plate Tournament →
+                  Back to Tournament Setup
                 </button>
+              ) : (
+                // Other brackets still going — offer to navigate
+                <>
+                  {plateInProgress && activeTab !== "plate" && (
+                    <button
+                      onClick={() => { setShowCloseOut(false); setActiveTab("plate"); }}
+                      style={{ width: "100%", padding: "14px", background: `${ORANGE}22`, border: `1px solid ${ORANGE}`, borderRadius: 12, color: ORANGE, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+                    >
+                      Continue to Plate Tournament →
+                    </button>
+                  )}
+                  {plateComplete && !closedBrackets.plate && activeTab !== "plate" && (
+                    <button
+                      onClick={() => { setShowCloseOut(false); setActiveTab("plate"); }}
+                      style={{ width: "100%", padding: "14px", background: `${ORANGE}22`, border: `1px solid ${ORANGE}`, borderRadius: 12, color: ORANGE, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+                    >
+                      Close Out Plate Tournament →
+                    </button>
+                  )}
+                  {champion && !closedBrackets.wb && activeTab === "plate" && (
+                    <button
+                      onClick={() => { setShowCloseOut(false); setActiveTab("wb"); }}
+                      style={{ width: "100%", padding: "14px", background: `${GOLD}22`, border: `1px solid ${GOLD}`, borderRadius: 12, color: GOLD, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+                    >
+                      Close Out Main Tournament →
+                    </button>
+                  )}
+                  <button
+                    onClick={handleCloseOutDismiss}
+                    style={{ width: "100%", padding: "14px", background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, color: TEXT, fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}
+                  >
+                    Back to Bracket
+                  </button>
+                </>
               )}
-              {!isSingleElim && lbInProgress && (
-                <button
-                  onClick={() => { setShowCloseOut(false); setActiveTab("lb"); }}
-                  style={{ width: "100%", padding: "14px", background: `${BLUE}22`, border: `1px solid ${BLUE}`, borderRadius: 12, color: BLUE, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
-                >
-                  Continue to Losers Bracket →
-                </button>
-              )}
-
-              {/* Close / dismiss */}
-              <button
-                onClick={() => setShowCloseOut(false)}
-                style={{ width: "100%", padding: "14px", background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, color: TEXT, fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}
-              >
-                Back to Bracket
-              </button>
             </div>
           </div>
         </div>
@@ -2119,6 +2177,37 @@ export default function App() {
           completedAt: new Date().toISOString(),
         };
         saveToHistory(entry);
+      }
+    }
+
+    // Auto-save plate to history as a separate entry when plate has a champion
+    if (s.screen === "bracket" && s.plateData) {
+      const plateChamp = s.plateData.matchMap[s.plateData.finalId]?.winner;
+      if (plateChamp) {
+        const mainName = s.tournamentName || "";
+        const plateName = mainName ? `${mainName} Plate` : `Plate`;
+        const plateResults = Object.values(s.plateData.matchMap)
+          .filter(m => m.winner && !m.isBye)
+          .sort((a, b) => a.matchNum - b.matchNum)
+          .map(m => ({
+            num: m.matchNum, p1: m.p1, p2: m.p2,
+            winner: m.winner, p1Games: m.p1Games || 0, p2Games: m.p2Games || 0,
+            isGrandFinal: m.matchNum === Math.max(...Object.values(s.plateData.matchMap).map(x => x.matchNum)),
+          }));
+        const plateEntry = {
+          id: `${tournamentIdRef.current || "t"}_plate`,
+          name: plateName,
+          champion: plateChamp,
+          players: plateResults.map(r => [r.p1, r.p2]).flat().filter((v, i, a) => v && v !== "BYE" && a.indexOf(v) === i),
+          results: plateResults,
+          playerCount: plateResults.map(r => [r.p1, r.p2]).flat().filter((v, i, a) => v && v !== "BYE" && a.indexOf(v) === i).length,
+          format: "Plate (Single Elimination)",
+          bestOf: s.bestOf,
+          hasGroups: false,
+          groupSummary: null,
+          completedAt: new Date().toISOString(),
+        };
+        saveToHistory(plateEntry);
       }
     }
   }, []);
