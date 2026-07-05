@@ -805,18 +805,24 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
   const editing = editingMatchId === matchId;
   const setEditing = (v) => setEditingMatchId && setEditingMatchId(v ? matchId : null);
 
+  const [hovered, setHovered] = useState(false);
+
   return (
-    <div style={{
-      background: CARD,
-      border: `1px solid ${settled ? accent + "55" : BORDER}`,
-      borderLeft: `3px solid ${accent}`,
-      borderRadius: 10,
-      minWidth: s.cardWidth,
-      width: s.cardWidth,
-      fontFamily: FONT,
-      boxShadow: isGrandFinal && settled ? `0 0 24px ${GOLD}44` : "none",
-      overflow: "hidden",
-    }}>
+    <div
+      style={{
+        background: CARD,
+        border: `1px solid ${settled ? accent + "55" : BORDER}`,
+        borderLeft: `3px solid ${accent}`,
+        borderRadius: 10,
+        minWidth: s.cardWidth,
+        width: s.cardWidth,
+        fontFamily: FONT,
+        boxShadow: isGrandFinal && settled ? `0 0 24px ${GOLD}44` : "none",
+        overflow: "hidden",
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       <div style={{
         padding: "5px 10px",
         fontSize: 11,
@@ -835,18 +841,18 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
         {settled && !editing && !readOnly && (
           <span
             onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-            style={{ fontSize: 11, color: GREEN, cursor: "pointer", textDecoration: "underline dotted" }}
-            title="Change winner"
-          >✓ DONE · EDIT</span>
+            style={{ fontSize: 11, color: GREEN, cursor: "pointer", opacity: hovered ? 1 : 0.7 }}
+            title="Tap to change winner"
+          >{hovered ? "✓ EDIT" : "✓"}</span>
         )}
         {settled && !editing && readOnly && (
-          <span style={{ fontSize: 11, color: GREEN }}>✓ DONE</span>
+          <span style={{ fontSize: 11, color: GREEN }}>✓</span>
         )}
         {settled && editing && (
           <span
             onClick={(e) => { e.stopPropagation(); setEditing(false); }}
-            style={{ fontSize: 11, color: MUTED, cursor: "pointer" }}
-          >CLOSE</span>
+            style={{ fontSize: 11, color: MUTED, cursor: "pointer", fontWeight: 700 }}
+          >✕ CANCEL</span>
         )}
       </div>
 
@@ -1584,20 +1590,68 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
             <Tooltip label={"Points Per Game\n\nGames won divided by total games played.\nRange: 0.00 to 1.00"}><span style={{ borderBottom: `1px dashed ${MUTED}`, cursor: "help" }}>PPG</span></Tooltip>
             <Tooltip label={"Game Differential\n\nGames won minus games lost across all matches.\nUsed as tiebreaker after PPG."}><span style={{ borderBottom: `1px dashed ${MUTED}`, cursor: "help" }}>+/-GMS</span></Tooltip>
           </div>
-          {allStandings[activeGroup].map((s, i) => (
+          {allStandings[activeGroup].map((s, i) => {
+            // Detect if this player is tied with an adjacent player at the qualification boundary
+            const isTiedAcrossBoundary = allStandings[activeGroup].some((other, j) => {
+              if (i === j) return false;
+              const sameStats = s.ppg.toFixed(3) === other.ppg.toFixed(3) && s.gameDiff === other.gameDiff && s.gamesWon === other.gamesWon;
+              // One of them is in, one is out
+              const crossesBoundary = (i < advancePerGroup) !== (j < advancePerGroup);
+              return sameStats && crossesBoundary;
+            });
+            return (
             <div key={s.player} style={{
               display: "grid", gridTemplateColumns: "28px 1fr 52px 60px 64px",
               padding: "11px 14px", fontSize: 15,
               background: i < advancePerGroup ? `${GREEN}11` : "transparent",
               borderBottom: i < allStandings[activeGroup].length - 1 ? `1px solid ${BORDER}` : "none",
+              outline: isTiedAcrossBoundary ? `2px solid ${GOLD}66` : "none",
+              outlineOffset: -2,
             }}>
               <div style={{ color: i < advancePerGroup ? GREEN : MUTED, fontWeight: 700 }}>{i + 1}</div>
-              <div style={{ fontWeight: i < advancePerGroup ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.player}</div>
+              <div style={{ fontWeight: i < advancePerGroup ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {s.player}
+                {isTiedAcrossBoundary && <span style={{ fontSize: 11, color: GOLD, marginLeft: 6 }}>⚠ tied</span>}
+              </div>
               <div style={{ color: MUTED, fontFamily: MONO, fontSize: 13 }}>{s.wins}-{s.losses}</div>
               <div style={{ color: MUTED, fontFamily: MONO, fontSize: 13 }}>{s.ppg.toFixed(2)}</div>
               <div style={{ color: s.gameDiff > 0 ? GREEN : s.gameDiff < 0 ? RED : MUTED, fontFamily: MONO, fontSize: 13, fontWeight: 600 }}>{s.gameDiff > 0 ? "+" : ""}{s.gameDiff}</div>
             </div>
-          ))}
+            );
+          })}
+
+          {/* Tiebreaker note when players are tied across the qualification line */}
+          {(() => {
+            const hasTie = allStandings[activeGroup].some((s, i) =>
+              allStandings[activeGroup].some((other, j) => {
+                if (i === j) return false;
+                const sameStats = s.ppg.toFixed(3) === other.ppg.toFixed(3) && s.gameDiff === other.gameDiff && s.gamesWon === other.gamesWon;
+                const crossesBoundary = (i < advancePerGroup) !== (j < advancePerGroup);
+                return sameStats && crossesBoundary;
+              })
+            );
+            if (!hasTie) return null;
+            return (
+              <div style={{ padding: "10px 14px", background: `${GOLD}11`, borderTop: `1px solid ${GOLD}33` }}>
+                <div style={{ fontSize: 12, color: GOLD, fontWeight: 600, marginBottom: 4 }}>⚠ Tie at the qualification boundary</div>
+                <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.5 }}>
+                  Two or more players are completely equal on all tiebreakers (PPG, game differential, and games won). The current positions are determined alphabetically as a last resort. You may need to resolve this manually — options include a playoff match between the tied players, or a coin toss.
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+
+        {/* Tiebreaker explanation — always shown */}
+        <div style={{ marginBottom: 20, padding: "10px 14px", background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: MUTED, marginBottom: 6 }}>How standings are ranked</div>
+          <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.6 }}>
+            Players are ranked in this order:{"\n"}
+            <span style={{ color: TEXT }}>1. PPG</span> (points per game — games won ÷ total games played){"\n"}
+            <span style={{ color: TEXT }}>2. +/-GMS</span> (game differential — games won minus games lost){"\n"}
+            <span style={{ color: TEXT }}>3. Games won</span> total across all matches{"\n"}
+            <span style={{ color: TEXT }}>4. Alphabetical</span> as a last resort if everything else is equal
+          </div>
         </div>
 
         <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Matches</div>
@@ -1729,7 +1783,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
   const [editingMatchId, setEditingMatchId] = useState(null); // lifted from MatchCard so it survives tab switches
   const [closedBrackets, setClosedBrackets] = useState({}); // { wb: bool, lb: bool, plate: bool }
 
-  // Which brackets are done
+  // Which brackets exist and are completeable
   const plateChampionCheck = plateData ? plateData.matchMap[plateData.finalId]?.winner : null;
   const plateInProgress = plateData && !plateChampionCheck;
   const plateComplete = plateData && !!plateChampionCheck;
@@ -1744,29 +1798,41 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
     return null;
   })();
 
-  // How many brackets still have active matches (not yet closed out)
-  const activeBrackets = [
-    champion && !closedBrackets.wb ? "wb" : null,
-    plateComplete && !closedBrackets.plate ? "plate" : null,
-  ].filter(Boolean);
+  // Brackets that HAVE a champion and haven't been closed yet
+  // Include plate even if still in progress — it means we shouldn't treat WB as "last"
+  const hasUnclosedWb = champion && !closedBrackets.wb;
+  const hasUnclosedPlate = plateComplete && !closedBrackets.plate;
+  const plateStillPending = plateData && !plateComplete; // plate exists but no winner yet
 
-  const isLastBracket = activeBrackets.length <= 1;
+  // isLastBracket: closing this bracket leaves nothing else to close out
+  // We're NOT last if: the other bracket has a champion not yet closed, OR plate still in progress
+  const isLastBracket = (() => {
+    const closingWb = activeTab === "wb" || activeTab === "gf";
+    const closingPlate = activeTab === "plate";
+    if (closingWb) {
+      // After closing WB, is there anything left? Plate (complete or in progress)
+      return !hasUnclosedPlate && !plateStillPending;
+    }
+    if (closingPlate) {
+      // After closing plate, is WB still open?
+      return !hasUnclosedWb;
+    }
+    return true;
+  })();
 
   const handleCloseOut = () => {
-    // Mark current tab as closed
     setClosedBrackets(prev => ({ ...prev, [activeTab]: true }));
     setShowCloseOut(true);
   };
 
   const handleCloseOutDismiss = () => {
     setShowCloseOut(false);
-    // Navigate to next in-progress bracket if any
-    const remaining = [
-      !closedBrackets.wb && champion ? "wb" : null,
-      !closedBrackets.plate && plateComplete ? "plate" : null,
-      plateInProgress ? "plate" : null,
-    ].filter(Boolean).find(t => t !== activeTab);
-    if (remaining) setActiveTab(remaining);
+    // Navigate to the other bracket
+    if (activeTab !== "plate" && (plateComplete || plateInProgress)) {
+      setActiveTab("plate");
+    } else if (activeTab === "plate" && hasUnclosedWb) {
+      setActiveTab("wb");
+    }
   };
 
   const wbLabel = (i, total) => {
