@@ -656,7 +656,8 @@ function buildRoundRobinMatches(group, bestOf) {
   return matches;
 }
 
-function computeStandings(group, matches, tiebreakOverrides = []) {
+function computeStandings(group, matches, tiebreakOverrides) {
+  const overrides = tiebreakOverrides || [];
   const stats = {};
   for (const p of group) {
     stats[p] = { player: p, wins: 0, losses: 0, gamesWon: 0, gamesPlayed: 0, played: 0 };
@@ -679,12 +680,11 @@ function computeStandings(group, matches, tiebreakOverrides = []) {
     if (b.ppg !== a.ppg) return b.ppg - a.ppg;
     if (b.gameDiff !== a.gameDiff) return b.gameDiff - a.gameDiff;
     if (b.gamesWon !== a.gamesWon) return b.gamesWon - a.gamesWon;
-    // Tiebreak override: manually promoted players sort before non-promoted within a tied cluster
-    const aOverride = tiebreakOverrides.indexOf(a.player);
-    const bOverride = tiebreakOverrides.indexOf(b.player);
-    if (aOverride !== -1 && bOverride === -1) return -1;
-    if (bOverride !== -1 && aOverride === -1) return 1;
-    if (aOverride !== -1 && bOverride !== -1) return aOverride - bOverride;
+    const ai = overrides.indexOf(a.player);
+    const bi = overrides.indexOf(b.player);
+    if (ai !== -1 && bi === -1) return -1;
+    if (bi !== -1 && ai === -1) return 1;
+    if (ai !== -1 && bi !== -1) return ai - bi;
     return a.player.localeCompare(b.player);
   });
   return list;
@@ -1490,6 +1490,9 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
 function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracket, saveStatus, saveError }) {
   const { groups, matchesByGroup, advancePerGroup, useScoring, bestOf, plateEnabled: groupPlateEnabled, tiebreakOverrides = {} } = groupState;
   const [activeGroup, setActiveGroup] = useState(0);
+  const [showTieModal, setShowTieModal] = useState(false);
+  const [tieModalGroup, setTieModalGroup] = useState(null);
+  const [tieModalOrder, setTieModalOrder] = useState([]);
   const scale = useViewportScale();
 
   const handleScore = useCallback((groupIdx, matchId, who, delta) => {
@@ -1544,7 +1547,6 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
 
   const qualifiers = allStandings.flatMap(s => s.slice(0, advancePerGroup).map(x => x.player));
 
-  // Tiebreak override handler
   const handleTiebreakOverride = useCallback((groupIdx, orderedPlayers) => {
     setGroupState(prev => ({
       ...prev,
@@ -1552,23 +1554,27 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
     }));
   }, [setGroupState]);
 
-  // Resolve tie modal
-  const [showTieModal, setShowTieModal] = useState(false);
-  const [tieModalGroup, setTieModalGroup] = useState(null);
-  const [tieModalOrder, setTieModalOrder] = useState([]);
+  const clearTieOverride = (groupIdx) => {
+    setGroupState(prev => {
+      const o = { ...(prev.tiebreakOverrides || {}) };
+      delete o[groupIdx];
+      return { ...prev, tiebreakOverrides: o };
+    });
+  };
 
   const openTieModal = (groupIdx) => {
     const standings = allStandings[groupIdx];
     const overrides = tiebreakOverrides[groupIdx] || [];
-    // Get all players involved in the tie across the boundary
-    const tiedPlayers = standings.filter((s, i) =>
-      standings.some((other, j) => {
-        if (i === j) return false;
-        const sameStats = s.ppg.toFixed(3) === other.ppg.toFixed(3) && s.gameDiff === other.gameDiff && s.gamesWon === other.gamesWon;
-        const crossesBoundary = (i < advancePerGroup) !== (j < advancePerGroup);
-        return sameStats && crossesBoundary;
-      })
-    ).map(s => s.player);
+    const tiedSet = new Set();
+    standings.forEach((s, i) => {
+      standings.forEach((other, j) => {
+        if (i === j) return;
+        const same = s.ppg.toFixed(3) === other.ppg.toFixed(3) && s.gameDiff === other.gameDiff && s.gamesWon === other.gamesWon;
+        const crosses = (i < advancePerGroup) !== (j < advancePerGroup);
+        if (same && crosses) { tiedSet.add(s.player); tiedSet.add(other.player); }
+      });
+    });
+    const tiedPlayers = [...tiedSet];
     setTieModalGroup(groupIdx);
     setTieModalOrder(overrides.length > 0 ? overrides : tiedPlayers);
     setShowTieModal(true);
@@ -1577,26 +1583,16 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
   const moveTiePlayer = (idx, dir) => {
     setTieModalOrder(prev => {
       const next = [...prev];
-      const target = idx + dir;
-      if (target < 0 || target >= next.length) return prev;
-      [next[idx], next[target]] = [next[target], next[idx]];
+      const t = idx + dir;
+      if (t < 0 || t >= next.length) return prev;
+      [next[idx], next[t]] = [next[t], next[idx]];
       return next;
     });
   };
 
   const applyTieOverride = () => {
-    if (tieModalGroup !== null) {
-      handleTiebreakOverride(tieModalGroup, tieModalOrder);
-    }
+    if (tieModalGroup !== null) handleTiebreakOverride(tieModalGroup, tieModalOrder);
     setShowTieModal(false);
-  };
-
-  const clearTieOverride = (groupIdx) => {
-    setGroupState(prev => {
-      const overrides = { ...(prev.tiebreakOverrides || {}) };
-      delete overrides[groupIdx];
-      return { ...prev, tiebreakOverrides: overrides };
-    });
   };
 
   // Advance modal state
@@ -1652,83 +1648,70 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
             <Tooltip label={"Game Differential\n\nGames won minus games lost across all matches.\nUsed as tiebreaker after PPG."}><span style={{ borderBottom: `1px dashed ${MUTED}`, cursor: "help" }}>+/-GMS</span></Tooltip>
           </div>
           {allStandings[activeGroup].map((s, i) => {
-            // Detect if this player is tied with an adjacent player at the qualification boundary
-            const isTiedAcrossBoundary = allStandings[activeGroup].some((other, j) => {
+            const isTied = allStandings[activeGroup].some((o, j) => {
               if (i === j) return false;
-              const sameStats = s.ppg.toFixed(3) === other.ppg.toFixed(3) && s.gameDiff === other.gameDiff && s.gamesWon === other.gamesWon;
-              // One of them is in, one is out
-              const crossesBoundary = (i < advancePerGroup) !== (j < advancePerGroup);
-              return sameStats && crossesBoundary;
+              const same = s.ppg.toFixed(3) === o.ppg.toFixed(3) && s.gameDiff === o.gameDiff && s.gamesWon === o.gamesWon;
+              return same && (i < advancePerGroup) !== (j < advancePerGroup);
             });
             return (
-            <div key={s.player} style={{
-              display: "grid", gridTemplateColumns: "28px 1fr 52px 60px 64px",
-              padding: "11px 14px", fontSize: 15,
-              background: i < advancePerGroup ? `${GREEN}11` : "transparent",
-              borderBottom: i < allStandings[activeGroup].length - 1 ? `1px solid ${BORDER}` : "none",
-              outline: isTiedAcrossBoundary ? `2px solid ${GOLD}66` : "none",
-              outlineOffset: -2,
-            }}>
-              <div style={{ color: i < advancePerGroup ? GREEN : MUTED, fontWeight: 700 }}>{i + 1}</div>
-              <div style={{ fontWeight: i < advancePerGroup ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {s.player}
-                {isTiedAcrossBoundary && <span style={{ fontSize: 11, color: GOLD, marginLeft: 6 }}>⚠ tied</span>}
+              <div key={s.player} style={{
+                display: "grid", gridTemplateColumns: "28px 1fr 52px 60px 64px",
+                padding: "11px 14px", fontSize: 15,
+                background: i < advancePerGroup ? `${GREEN}11` : "transparent",
+                borderBottom: i < allStandings[activeGroup].length - 1 ? `1px solid ${BORDER}` : "none",
+                outline: isTied ? `2px solid ${GOLD}88` : "none", outlineOffset: -2,
+              }}>
+                <div style={{ color: i < advancePerGroup ? GREEN : MUTED, fontWeight: 700 }}>{i + 1}</div>
+                <div style={{ fontWeight: i < advancePerGroup ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {s.player}
+                  {isTied && <span style={{ fontSize: 11, color: GOLD, marginLeft: 6 }}>TIE</span>}
+                </div>
+                <div style={{ color: MUTED, fontFamily: MONO, fontSize: 13 }}>{s.wins}-{s.losses}</div>
+                <div style={{ color: MUTED, fontFamily: MONO, fontSize: 13 }}>{s.ppg.toFixed(2)}</div>
+                <div style={{ color: s.gameDiff > 0 ? GREEN : s.gameDiff < 0 ? RED : MUTED, fontFamily: MONO, fontSize: 13, fontWeight: 600 }}>{s.gameDiff > 0 ? "+" : ""}{s.gameDiff}</div>
               </div>
-              <div style={{ color: MUTED, fontFamily: MONO, fontSize: 13 }}>{s.wins}-{s.losses}</div>
-              <div style={{ color: MUTED, fontFamily: MONO, fontSize: 13 }}>{s.ppg.toFixed(2)}</div>
-              <div style={{ color: s.gameDiff > 0 ? GREEN : s.gameDiff < 0 ? RED : MUTED, fontFamily: MONO, fontSize: 13, fontWeight: 600 }}>{s.gameDiff > 0 ? "+" : ""}{s.gameDiff}</div>
-            </div>
             );
           })}
-
-          {/* Tiebreaker note when players are tied across the qualification line */}
           {(() => {
-            const hasTie = allStandings[activeGroup].some((s, i) =>
-              allStandings[activeGroup].some((other, j) => {
-                if (i === j) return false;
-                const sameStats = s.ppg.toFixed(3) === other.ppg.toFixed(3) && s.gameDiff === other.gameDiff && s.gamesWon === other.gamesWon;
-                const crossesBoundary = (i < advancePerGroup) !== (j < advancePerGroup);
-                return sameStats && crossesBoundary;
-              })
-            );
+            const hasTie = allStandings[activeGroup].some((s, i) => allStandings[activeGroup].some((o, j) => {
+              if (i === j) return false;
+              const same = s.ppg.toFixed(3) === o.ppg.toFixed(3) && s.gameDiff === o.gameDiff && s.gamesWon === o.gamesWon;
+              return same && (i < advancePerGroup) !== (j < advancePerGroup);
+            }));
             if (!hasTie) return null;
             const hasOverride = (tiebreakOverrides[activeGroup] || []).length > 0;
             return (
-              <div style={{ padding: "12px 14px", background: `${GOLD}11`, borderTop: `1px solid ${GOLD}33` }}>
-                <div style={{ fontSize: 13, color: GOLD, fontWeight: 600, marginBottom: 4 }}>⚠ Tie at the qualification boundary</div>
+              <div style={{ padding: "12px 14px", background: `${GOLD}14`, borderTop: `1px solid ${GOLD}44` }}>
+                <div style={{ fontSize: 13, color: GOLD, fontWeight: 600, marginBottom: 6 }}>Tie at the qualification boundary</div>
                 <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.5, marginBottom: 10 }}>
-                  Players are equal on all tiebreakers (PPG, game differential, games won). Use the button below to manually set the order for tied players, or run a playoff match between them and enter the result above.
+                  Players marked TIE are equal on all tiebreakers. Use the button below to set the order manually, or play a playoff match and enter the result above.
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <button onClick={() => openTieModal(activeGroup)} style={{
-                    flex: 1, padding: "9px 0", background: `${GOLD}22`, border: `1px solid ${GOLD}`, borderRadius: 8,
-                    color: GOLD, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
-                  }}>✎ Manually Set Order</button>
-                  {hasOverride && (
-                    <button onClick={() => clearTieOverride(activeGroup)} style={{
-                      padding: "9px 14px", background: "transparent", border: `1px solid ${BORDER}`, borderRadius: 8,
-                      color: MUTED, fontSize: 13, cursor: "pointer", fontFamily: "inherit",
-                    }}>Reset</button>
-                  )}
+                  <button onClick={() => openTieModal(activeGroup)} style={{ flex: 1, padding: "9px 0", background: `${GOLD}22`, border: `1px solid ${GOLD}`, borderRadius: 8, color: GOLD, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Set Order Manually</button>
+                  {hasOverride && <button onClick={() => clearTieOverride(activeGroup)} style={{ padding: "9px 14px", background: "transparent", border: `1px solid ${BORDER}`, borderRadius: 8, color: MUTED, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Reset</button>}
                 </div>
               </div>
             );
           })()}
         </div>
-
-        {/* Tiebreaker explanation — always shown */}
         <div style={{ marginBottom: 20, padding: "10px 14px", background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: MUTED, marginBottom: 6 }}>How standings are ranked</div>
-          <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.6 }}>
-            Players are ranked in this order:{"\n"}
-            <span style={{ color: TEXT }}>1. PPG</span> (points per game — games won ÷ total games played){"\n"}
-            <span style={{ color: TEXT }}>2. +/-GMS</span> (game differential — games won minus games lost){"\n"}
-            <span style={{ color: TEXT }}>3. Games won</span> total across all matches{"\n"}
-            <span style={{ color: TEXT }}>4. Alphabetical</span> as a last resort if everything else is equal
+          <div style={{ fontSize: 12, fontWeight: 600, color: MUTED, marginBottom: 8 }}>How standings are ranked</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+            {[
+              ["1. PPG", "Points per game - games won divided by total games played"],
+              ["2. +/-GMS", "Game differential - games won minus games lost"],
+              ["3. Games won", "Total games won across all matches"],
+              ["4. Alphabetical", "Last resort - use Set Order Manually to override"],
+            ].map(([label, desc]) => (
+              <div key={label} style={{ display: "flex", gap: 8, fontSize: 12 }}>
+                <span style={{ color: TEXT, fontWeight: 600, flexShrink: 0, minWidth: 90 }}>{label}</span>
+                <span style={{ color: MUTED }}>{desc}</span>
+              </div>
+            ))}
           </div>
         </div>
 
-        <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Matches</div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Matches</div>        <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Matches</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {(matchesByGroup[activeGroup] || []).map(m => {
             const shim = { [m.id]: { ...m, matchNum: m.id.replace("rr", ""), winnerGoesToMatchId: null, loserGoesToMatchId: null, p1FromMatchId: null, p2FromMatchId: null } };
@@ -1782,63 +1765,40 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
           </div>
         </div>
       )}
-    </div>
 
-      {/* Tie resolution modal */}
       {showTieModal && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 200, display: "flex", alignItems: "flex-end" }}>
           <div style={{ background: CARD, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: "24px 20px 40px", width: "100%", maxHeight: "85vh", overflowY: "auto", boxSizing: "border-box" }}>
-            <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>⚠ Resolve Tie — Group {String.fromCharCode(65 + tieModalGroup)}</div>
-            <div style={{ fontSize: 14, color: MUTED, marginBottom: 20, lineHeight: 1.5 }}>
-              These players are tied on all stats. Drag to reorder, or use the arrows to set who qualifies. Players at the top will be ranked higher.
+            <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>
+              Resolve Tie - Group {String.fromCharCode(65 + (tieModalGroup || 0))}
             </div>
-
+            <div style={{ fontSize: 14, color: MUTED, marginBottom: 20, lineHeight: 1.5 }}>
+              These players are equal on all stats. Use the arrows to reorder them. Players higher up will rank higher in the standings.
+            </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
               {tieModalOrder.map((player, idx) => {
-                const qualifies = idx < advancePerGroup - (allStandings[tieModalGroup].findIndex(s => s.player === player) < advancePerGroup
-                  ? allStandings[tieModalGroup].filter((s, i) => i < advancePerGroup && !tieModalOrder.includes(s.player)).length
-                  : 0);
-                // Simple approach: first N players in tieModalOrder who fill the tied spots qualify
-                // Count how many non-tied players already occupy qualifier spots
-                const standings = allStandings[tieModalGroup];
+                const standings = allStandings[tieModalGroup || 0];
                 const tiedSet = new Set(tieModalOrder);
-                const nonTiedQualifiers = standings.filter((s, i) => i < advancePerGroup && !tiedSet.has(s.player)).length;
-                const slotsForTied = advancePerGroup - nonTiedQualifiers;
+                const nonTiedQ = standings.filter((s, i) => i < advancePerGroup && !tiedSet.has(s.player)).length;
+                const slotsForTied = advancePerGroup - nonTiedQ;
                 const willQualify = idx < slotsForTied;
                 return (
-                  <div key={player} style={{
-                    display: "flex", alignItems: "center", gap: 12,
-                    padding: "12px 14px", borderRadius: 10,
-                    background: willQualify ? `${GREEN}18` : `${CARD2}`,
-                    border: `1px solid ${willQualify ? GREEN + "55" : BORDER}`,
-                  }}>
+                  <div key={player} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 10, background: willQualify ? `${GREEN}18` : CARD2, border: `1px solid ${willQualify ? GREEN + "55" : BORDER}` }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 15, fontWeight: 600 }}>{player}</div>
-                      <div style={{ fontSize: 12, color: willQualify ? GREEN : MUTED, marginTop: 2 }}>
-                        {willQualify ? "✓ Qualifies" : "✗ Does not qualify"}
-                      </div>
+                      <div style={{ fontSize: 12, color: willQualify ? GREEN : MUTED, marginTop: 2 }}>{willQualify ? "Qualifies" : "Does not qualify"}</div>
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      <button
-                        onClick={() => moveTiePlayer(idx, -1)}
-                        disabled={idx === 0}
-                        style={{ width: 32, height: 28, borderRadius: 6, border: `1px solid ${BORDER}`, background: CARD2, color: idx === 0 ? BORDER : TEXT, fontSize: 14, cursor: idx === 0 ? "default" : "pointer", fontFamily: "inherit" }}
-                      >▲</button>
-                      <button
-                        onClick={() => moveTiePlayer(idx, 1)}
-                        disabled={idx === tieModalOrder.length - 1}
-                        style={{ width: 32, height: 28, borderRadius: 6, border: `1px solid ${BORDER}`, background: CARD2, color: idx === tieModalOrder.length - 1 ? BORDER : TEXT, fontSize: 14, cursor: idx === tieModalOrder.length - 1 ? "default" : "pointer", fontFamily: "inherit" }}
-                      >▼</button>
+                      <button onClick={() => moveTiePlayer(idx, -1)} disabled={idx === 0}
+                        style={{ width: 36, height: 30, borderRadius: 6, border: `1px solid ${BORDER}`, background: CARD2, color: idx === 0 ? BORDER : TEXT, fontSize: 14, cursor: idx === 0 ? "default" : "pointer", fontFamily: "inherit" }}>up</button>
+                      <button onClick={() => moveTiePlayer(idx, 1)} disabled={idx === tieModalOrder.length - 1}
+                        style={{ width: 36, height: 30, borderRadius: 6, border: `1px solid ${BORDER}`, background: CARD2, color: idx === tieModalOrder.length - 1 ? BORDER : TEXT, fontSize: 14, cursor: idx === tieModalOrder.length - 1 ? "default" : "pointer", fontFamily: "inherit" }}>dn</button>
                     </div>
                   </div>
                 );
               })}
             </div>
-
-            <div style={{ fontSize: 12, color: MUTED, marginBottom: 16 }}>
-              This only affects the order of tied players. All other standings remain unchanged.
-            </div>
-
+            <div style={{ fontSize: 12, color: MUTED, marginBottom: 16 }}>This only affects the order of tied players.</div>
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={() => setShowTieModal(false)} style={{ flex: 1, padding: "14px", background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, color: TEXT, fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
               <button onClick={applyTieOverride} style={{ flex: 2, padding: "14px", background: GOLD, border: "none", borderRadius: 12, color: "#0D0F14", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Apply Order</button>
@@ -1846,6 +1806,7 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
           </div>
         </div>
       )}
+    </div>
   );
 }
 
