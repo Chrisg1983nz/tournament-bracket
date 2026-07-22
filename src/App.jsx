@@ -1843,7 +1843,7 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
 // BRACKET SCREEN
 // ===========================================================================
 
-function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, plateEnabled, onBuildPlate, players, onBack, grandFinalEnabled, useScoring, isSingleElim, saveStatus, saveError }) {
+function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, plateEnabled, onBuildPlate, players, onBack, grandFinalEnabled, useScoring, isSingleElim, saveStatus, saveError, closedBrackets, setClosedBrackets, onAllBracketsClosed }) {
   const { matchMap, winnersRounds, losersRounds, grandFinalId, prelimRound } = bracketData;
   const allWbRounds = prelimRound ? [prelimRound, ...winnersRounds] : winnersRounds;
   const scale = useViewportScale();
@@ -1910,7 +1910,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
       bracketScrollRef.current.scrollLeft = 0;
     }
   }, []);
-  const [closedBrackets, setClosedBrackets] = useState({});
+  // closedBrackets now passed in as a prop from App so it can be persisted/resumed
 
   // Derive current section from activeTab key prefix
   const activeSection = activeTab.startsWith("wb") ? "wb"
@@ -1930,6 +1930,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
     : null;
   const lbComplete = !isSingleElim && !!lbChampion;
   const lbInProgress = !isSingleElim && losersRounds.length > 0 && !lbChampion;
+  const wbInProgress = !champion;
 
   const currentTabChampion = (() => {
     if (activeSection === "wb" || activeSection === "gf") return champion;
@@ -1937,21 +1938,26 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
     if (activeSection === "plate") return plateChampionCheck;
     return null;
   })();
-  const hasUnclosedWb = champion && !closedBrackets.wb;
-  const hasUnclosedLb = lbComplete && !closedBrackets.lb;
-  const hasUnclosedPlate = plateComplete && !closedBrackets.plate;
-  const plateStillPending = plateData && !plateComplete;
+  // "Settled" means this bracket either doesn't apply, or has been explicitly
+  // closed by the user - NOT simply "no champion yet". This is what fixes the
+  // bug where an in-progress WB (no champion yet) was mistaken for a
+  // non-existent one when closing out LB/Plate.
+  const lbApplicable = !isSingleElim && losersRounds.length > 0;
+  const plateApplicable = !!plateData;
+  const wbSettled = !!closedBrackets.wb;
+  const lbSettled = !lbApplicable || !!closedBrackets.lb;
+  const plateSettled = !plateApplicable || !!closedBrackets.plate;
 
   const isLastBracket = (() => {
     const closingWb = activeSection === "wb" || activeSection === "gf";
     const closingLb = activeSection === "lb";
     const closingPlate = activeSection === "plate";
-    // Closing WB: still have LB or plate active?
-    if (closingWb) return !hasUnclosedLb && !lbInProgress && !hasUnclosedPlate && !plateStillPending;
-    // Closing LB: still have WB or plate active?
-    if (closingLb) return !hasUnclosedWb && !hasUnclosedPlate && !plateStillPending;
-    // Closing plate: last only if WB and LB are both already closed
-    if (closingPlate) return closedBrackets.wb && (!lbComplete || closedBrackets.lb);
+    // Closing WB: still have LB or plate unsettled (in progress or awaiting close)?
+    if (closingWb) return lbSettled && plateSettled;
+    // Closing LB: still have WB or plate unsettled?
+    if (closingLb) return wbSettled && plateSettled;
+    // Closing plate: last only if WB and LB are both already settled
+    if (closingPlate) return wbSettled && lbSettled;
     return true;
   })();
 
@@ -1960,18 +1966,24 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
     setShowCloseOut(true);
   };
 
+  const handleFinalDismiss = () => {
+    setShowCloseOut(false);
+    if (onAllBracketsClosed) onAllBracketsClosed();
+    onBack();
+  };
+
   const handleCloseOutDismiss = () => {
     setShowCloseOut(false);
-    // Navigate to the next active bracket
+    // Navigate to the next bracket that still needs attention (in progress or awaiting close)
     if (activeSection === "plate") {
-      if (hasUnclosedWb) setActiveTab("wb-0");
-      else if (hasUnclosedLb) setActiveTab("lb-0");
+      if (!wbSettled) setActiveTab("wb-0");
+      else if (!lbSettled) setActiveTab("lb-0");
     } else if (activeSection === "wb" || activeSection === "gf") {
-      if (hasUnclosedLb || lbInProgress) setActiveTab("lb-0");
-      else if (plateComplete || plateInProgress) setActiveTab("plate-0");
+      if (!lbSettled) setActiveTab("lb-0");
+      else if (!plateSettled) setActiveTab("plate-0");
     } else if (activeSection === "lb") {
-      if (hasUnclosedWb) setActiveTab("wb-0");
-      else if (plateComplete || plateInProgress) setActiveTab("plate-0");
+      if (!wbSettled) setActiveTab("wb-0");
+      else if (!plateSettled) setActiveTab("plate-0");
     }
   };
 
@@ -2007,20 +2019,25 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
       color: GOLD,
       section: "gf",
     }] : []),
-    ...(!isSingleElim && losersRounds.length > 0 ? [{
-      key: "lb-0",
-      colId: "round-col-lb-0",
-      label: "Losers",
+    ...(!isSingleElim && losersRounds.length > 0 ? losersRounds.map((_, i) => ({
+      key: `lb-${i}`,
+      colId: `round-col-lb-${i}`,
+      label: lbLabel(i),
       color: BLUE,
       section: "lb",
-    }] : []),
-    ...(plateData ? [{
-      key: "plate-0",
-      colId: "round-col-plate-0",
-      label: "Plate",
-      color: "#FB923C",
-      section: "plate",
-    }] : []),
+    })) : []),
+    ...(plateData ? (plateData.rounds || []).map((_, i) => {
+      const pr = plateData.rounds || [];
+      const isLast = i === pr.length - 1;
+      const label = isLast ? "Plate Final" : i === pr.length - 2 ? "Semi Final" : i === pr.length - 3 ? "Qtr Final" : `Plate Rd ${i + 1}`;
+      return {
+        key: `plate-${i}`,
+        colId: `round-col-plate-${i}`,
+        label,
+        color: "#FB923C",
+        section: "plate",
+      };
+    }) : []),
   ];
 
   return (
@@ -2322,31 +2339,31 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
 
             <div style={{ marginTop: 36, display: "flex", flexDirection: "column", gap: 10 }}>
               {isLastBracket ? (
-                <button onClick={onBack}
+                <button onClick={handleFinalDismiss}
                   style={{ width: "100%", padding: "16px", background: GOLD, border: "none", borderRadius: 12, color: "#0D0F14", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                   Back to Tournament Setup
                 </button>
               ) : (
                 <>
-                  {/* Navigate to LB if it's still running */}
-                  {(lbInProgress || hasUnclosedLb) && activeSection !== "lb" && (
+                  {/* Navigate to LB if it isn't settled yet (still running or awaiting close) */}
+                  {!lbSettled && activeSection !== "lb" && (
                     <button onClick={() => { setShowCloseOut(false); setActiveTab("lb-0"); }}
                       style={{ width: "100%", padding: "14px", background: `${BLUE}18`, border: `1px solid ${BLUE}`, borderRadius: 12, color: BLUE, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                       {lbInProgress ? "Continue to Losers Bracket" : "Close Out Losers Bracket"}
                     </button>
                   )}
-                  {/* Navigate to plate if it exists */}
-                  {(plateInProgress || hasUnclosedPlate) && activeSection !== "plate" && (
+                  {/* Navigate to plate if it isn't settled yet */}
+                  {!plateSettled && activeSection !== "plate" && (
                     <button onClick={() => { setShowCloseOut(false); setActiveTab("plate-0"); }}
                       style={{ width: "100%", padding: "14px", background: `${ORANGE}18`, border: `1px solid ${ORANGE}`, borderRadius: 12, color: ORANGE, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                       {plateInProgress ? "Continue to Plate" : "Close Out Plate"}
                     </button>
                   )}
-                  {/* Navigate back to main WB if closing from plate/LB */}
-                  {hasUnclosedWb && activeSection !== "wb" && activeSection !== "gf" && (
+                  {/* Navigate back to main WB if it isn't settled yet - whether still being played or finished-but-unclosed */}
+                  {!wbSettled && activeSection !== "wb" && activeSection !== "gf" && (
                     <button onClick={() => { setShowCloseOut(false); setActiveTab("wb-0"); }}
                       style={{ width: "100%", padding: "14px", background: `${GOLD}18`, border: `1px solid ${GOLD}`, borderRadius: 12, color: GOLD, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                      Close Out Main Tournament
+                      {wbInProgress ? "Continue to Main Bracket" : "Close Out Main Tournament"}
                     </button>
                   )}
                   <button onClick={handleCloseOutDismiss}
@@ -2394,6 +2411,7 @@ export default function App() {
   const saveTimer = useRef(null);
   const latestStateRef = useRef(null);
   const tournamentIdRef = useRef(null);
+  const [closedBrackets, setClosedBrackets] = useState({});
 
   const [saveStatus, setSaveStatus] = useState("idle");
   const [saveError, setSaveError] = useState(null);
@@ -2416,13 +2434,19 @@ export default function App() {
 
   // -- Keep ref current ---------------------------------------------------
   useEffect(() => {
-    latestStateRef.current = { screen, players, grandFinal, useScoring, bestOf, tournamentName, isSingleElim, plateEnabled, bracketData, plateData, groupState };
-  }, [screen, players, grandFinal, useScoring, bestOf, tournamentName, isSingleElim, bracketData, plateData, groupState]);
+    latestStateRef.current = { screen, players, grandFinal, useScoring, bestOf, tournamentName, isSingleElim, plateEnabled, bracketData, plateData, groupState, closedBrackets };
+  }, [screen, players, grandFinal, useScoring, bestOf, tournamentName, isSingleElim, bracketData, plateData, groupState, closedBrackets]);
 
   // -- Save ---------------------------------------------------------------
   const flushSave = useCallback(() => {
     const s = latestStateRef.current;
     if (!s || s.screen === "loading" || s.screen === "setup") return;
+    // Ensure a stable tournament id exists as soon as we're on an active
+    // bracket, so it can be persisted and correctly restored on Resume
+    // (prevents duplicate history entries from a regenerated id).
+    if (s.screen === "bracket" && s.bracketData && !tournamentIdRef.current) {
+      tournamentIdRef.current = `t_${Date.now()}`;
+    }
     const snapshot = {
       screen: s.screen, players: s.players, grandFinal: s.grandFinal,
       useScoring: s.useScoring, bestOf: s.bestOf,
@@ -2432,6 +2456,8 @@ export default function App() {
       bracketData: s.bracketData ? { ...s.bracketData } : null,
       plateData: s.plateData ? { ...s.plateData } : null,
       groupState: s.groupState,
+      closedBrackets: s.closedBrackets || {},
+      tournamentId: tournamentIdRef.current,
       savedAt: new Date().toISOString(),
     };
     setSaveStatus("saving");
@@ -2439,6 +2465,7 @@ export default function App() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
       setSaveStatus("saved");
       setSaveError(null);
+      setSavedSnapshot(snapshot);
     } catch (e) {
       setSaveStatus("error");
       setSaveError(e && e.message ? e.message : String(e));
@@ -2449,7 +2476,6 @@ export default function App() {
       const { matchMap, winnersRounds, losersRounds, grandFinalId } = s.bracketData;
       const summary = summariseBracket(matchMap, s.players, s.grandFinal, winnersRounds, losersRounds, grandFinalId);
       if (summary && summary.champion) {
-        if (!tournamentIdRef.current) tournamentIdRef.current = `t_${Date.now()}`;
         const groupSummary = s.groupState ? s.groupState.groups.map((g, i) => ({
           standings: computeStandings(g, s.groupState.matchesByGroup[i] || []),
           advance: s.groupState.advancePerGroup,
@@ -2547,6 +2573,7 @@ export default function App() {
 
   const handleGenerateBracket = (names, gf, scoring, bo, name, elimType, platEn) => {
     tournamentIdRef.current = `t_${Date.now()}`;
+    setClosedBrackets({});
     const single = elimType === "single";
     const data = single
       ? (() => { const d = buildSingleElim(names, { shuffle: true, bestOf: bo }); return { ...d, winnersRounds: d.rounds, losersRounds: [], grandFinalId: d.finalId, prelimRound: null }; })()
@@ -2566,6 +2593,7 @@ export default function App() {
 
   const handleGenerateGroups = (names, groupCount, advancePerGroup, scoring, bo, gf, name, platEn) => {
     tournamentIdRef.current = `t_${Date.now()}`;
+    setClosedBrackets({});
     const groups = distributeGroups(names, groupCount);
     const matchesByGroup = {};
     groups.forEach((g, i) => { matchesByGroup[i] = buildRoundRobinMatches(g, bo); });
@@ -2583,6 +2611,7 @@ export default function App() {
   };
 
   const handleAdvanceToBracket = ({ qualifiers, plateEnabled: platEn }) => {
+    setClosedBrackets({});
     const wrap = (d) => ({ ...d, winnersRounds: d.rounds, losersRounds: [], grandFinalId: d.finalId, prelimRound: null });
     const wb = wrap(buildSingleElim(qualifiers, { shuffle: true, bestOf }));
     setPlayers(qualifiers);
@@ -2605,6 +2634,10 @@ export default function App() {
     setBracketData(savedSnapshot.bracketData || null);
     setPlateData(savedSnapshot.plateData || null);
     setGroupStateRaw(savedSnapshot.groupState || null);
+    setClosedBrackets(savedSnapshot.closedBrackets || {});
+    // Restore the original tournament id so re-closing a bracket updates the
+    // existing history entry instead of creating a duplicate.
+    tournamentIdRef.current = savedSnapshot.tournamentId || null;
     const s = savedSnapshot.screen;
     setScreen(s && s !== "setup" && s !== "loading" ? s : "setup");
   };
@@ -2670,6 +2703,16 @@ export default function App() {
         isSingleElim={isSingleElim}
         saveStatus={saveStatus}
         saveError={saveError}
+        closedBrackets={closedBrackets}
+        setClosedBrackets={setClosedBrackets}
+        onAllBracketsClosed={() => {
+          // Tournament is fully wrapped up - clear the saved snapshot so it
+          // can no longer be resumed. Cancel any pending debounced save first
+          // so it can't write the snapshot back after we clear it.
+          if (saveTimer.current) clearTimeout(saveTimer.current);
+          try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+          setSavedSnapshot(null);
+        }}
       />
     );
   }
