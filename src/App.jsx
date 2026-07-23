@@ -2187,20 +2187,28 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
     return i === 0 ? "LB Round 1" : `LB Round ${i + 1}`;
   };
 
-  // WB round-by-round gap/offset layout, driven by whichever WB round (or GF)
-  // is currently active. GF counts as one extra "round" at the end so the WB
-  // final aligns/connects to it the same way any other pair does.
+  // WB round-by-round gap/offset layout, driven by whichever WB round is
+  // currently active. GF is NOT part of this array - it's a straight 1:1
+  // feed from the WB final, so its position is derived separately below
+  // (matching the WB final's own offset exactly, not the pair-midpoint math).
   const gutterWidth = scale.tier === "desktop" ? 40 : 28;
-  const wbRoundCountForLayout = allWbRounds.length + (!isSingleElim && grandFinalEnabled ? 1 : 0);
-  const wbActiveIndex = activeSection === "wb"
-    ? parseInt(activeTab.split("-")[1], 10)
-    : (activeSection === "gf" ? allWbRounds.length : -1);
-  const wbLayout = computeRoundLayout(wbRoundCountForLayout, wbActiveIndex, cardHeight);
+  const wbActiveIndex = activeSection === "wb" ? parseInt(activeTab.split("-")[1], 10) : -1;
+  const wbLayout = computeRoundLayout(allWbRounds.length, wbActiveIndex, cardHeight);
+  // GF's card must line up with the WB final (single match, 1:1), so it
+  // simply inherits the WB final round's own top offset.
+  const gfOffset = wbLayout.offsets[allWbRounds.length - 1] || 0;
 
   // Plate round-by-round layout (independent bracket, own active state)
   const plateRoundsArr = plateData ? (plateData.rounds || []) : [];
   const plateActiveIndex = activeSection === "plate" ? parseInt(activeTab.split("-")[1], 10) : -1;
   const plateLayout = computeRoundLayout(plateRoundsArr.length, plateActiveIndex, cardHeight);
+
+  // LB round-by-round layout (independent bracket, own active state). LB
+  // round sizes don't always halve cleanly (some rounds merge in WB losers
+  // without eliminating anyone), so connector lines only draw where the
+  // ratio between adjacent rounds is a clean 2:1 or 1:1 - see BracketConnectors.
+  const lbActiveIndex = activeSection === "lb" ? parseInt(activeTab.split("-")[1], 10) : -1;
+  const lbLayout = computeRoundLayout(losersRounds.length, lbActiveIndex, cardHeight);
 
   // Pill nav: one button per WB round + GF + LB + Plate
   const roundTabs = [
@@ -2405,7 +2413,8 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                     <BracketConnectors
                       feederCount={round.length} targetCount={nextCount}
                       feederOffset={wbLayout.offsets[i]} feederGap={wbLayout.gaps[i]}
-                      targetOffset={wbLayout.offsets[i + 1]} targetGap={wbLayout.gaps[i + 1]}
+                      targetOffset={isLastWbRound ? gfOffset : wbLayout.offsets[i + 1]}
+                      targetGap={isLastWbRound ? 0 : wbLayout.gaps[i + 1]}
                       cardHeight={cardHeight} gutterWidth={gutterWidth} color={isLastWbRound ? GOLD : PURPLE}
                     />
                   </div>
@@ -2418,7 +2427,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
           {!isSingleElim && grandFinalEnabled && (
             <div id="round-col-gf-0" style={{ flexShrink: 0, paddingRight: scale.tier === "desktop" ? 40 : 28 }}>
               <div style={{ fontSize: 11, color: GOLD, letterSpacing: "0.08em", fontWeight: 700, marginBottom: 12, textTransform: "uppercase" }}>Grand Final</div>
-              <div style={{ paddingTop: wbLayout.offsets[allWbRounds.length] || 0, transition: "padding-top 0.35s cubic-bezier(0.4, 0, 0.2, 1)" }}>
+              <div style={{ paddingTop: gfOffset, transition: "padding-top 0.35s cubic-bezier(0.4, 0, 0.2, 1)" }}>
                 <div data-bracket-card="true">
                   <MatchCard matchId={grandFinalId} matchMap={matchMap}
                     onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
@@ -2461,17 +2470,32 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
               <div style={{ flexShrink: 0, width: 2, alignSelf: "stretch", background: BORDER, marginRight: scale.tier === "desktop" ? 40 : 28 }} />
               {losersRounds.map((round, i) => {
                 const isActive = activeTab === `lb-${i}`;
+                const isLastLbRound = i === losersRounds.length - 1;
+                const nextCount = isLastLbRound ? 0 : losersRounds[i + 1].length;
                 return (
-                  <div key={`lb-${i}`} id={`round-col-lb-${i}`} style={{ flexShrink: 0, paddingRight: scale.tier === "desktop" ? 40 : 28 }}>
-                    <RoundCol
-                      title={lbLabel(i)} matchIds={round} matchMap={matchMap}
-                      onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
-                      isLosers={true} useScoring={useScoring} scale={scale}
-                      editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.lb}
-                      isActive={isActive}
-                      spacing={isActive ? 20 : 6}
-                    />
-                  </div>
+                  <Fragment key={`lb-frag-${i}`}>
+                    <div id={`round-col-lb-${i}`} style={{ flexShrink: 0, paddingRight: nextCount > 0 ? 0 : (scale.tier === "desktop" ? 40 : 28) }}>
+                      <RoundCol
+                        title={lbLabel(i)} matchIds={round} matchMap={matchMap}
+                        onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
+                        isLosers={true} useScoring={useScoring} scale={scale}
+                        editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.lb}
+                        isActive={isActive}
+                        spacing={lbLayout.gaps[i]}
+                        offset={lbLayout.offsets[i]}
+                      />
+                    </div>
+                    {nextCount > 0 && (
+                      <div style={{ flexShrink: 0, width: gutterWidth, paddingTop: BRACKET_TITLE_BLOCK_HEIGHT }}>
+                        <BracketConnectors
+                          feederCount={round.length} targetCount={nextCount}
+                          feederOffset={lbLayout.offsets[i]} feederGap={lbLayout.gaps[i]}
+                          targetOffset={lbLayout.offsets[i + 1]} targetGap={lbLayout.gaps[i + 1]}
+                          cardHeight={cardHeight} gutterWidth={gutterWidth} color={BLUE}
+                        />
+                      </div>
+                    )}
+                  </Fragment>
                 );
               })}
             </>
