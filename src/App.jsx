@@ -953,7 +953,7 @@ function SaveBadge({ status, error }) {
   );
 }
 
-function RoundCol({ title, matchIds, matchMap, onPickWinner, onChangeWinner, onScore, isLosers, isGrandFinal, spacing, useScoring, scale, editingMatchId, setEditingMatchId, readOnly }) {
+function RoundCol({ title, matchIds, matchMap, onPickWinner, onChangeWinner, onScore, isLosers, isGrandFinal, spacing, useScoring, scale, editingMatchId, setEditingMatchId, readOnly, isActive }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", flexShrink: 0 }}>
       <div style={{
@@ -961,11 +961,14 @@ function RoundCol({ title, matchIds, matchMap, onPickWinner, onChangeWinner, onS
         color: isGrandFinal ? GOLD : isLosers ? BLUE : PURPLE,
         letterSpacing: "0.08em", fontWeight: 700, marginBottom: 12,
         textTransform: "uppercase", paddingLeft: 2,
+        opacity: isActive === false ? 0.55 : 1,
+        transition: "opacity 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
       }}>{title}</div>
 
       <div style={{
         display: "flex", flexDirection: "column", gap: (spacing != null ? spacing : 16),
-        justifyContent: "space-around", flex: 1,
+        justifyContent: "flex-start", flex: 1,
+        transition: "gap 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
       }}>
         {(Array.isArray(matchIds) ? matchIds : [matchIds]).map(id => (
           <MatchCard
@@ -2181,18 +2184,22 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
         <div style={{ display: "inline-flex", gap: 0, alignItems: "flex-start", padding: "0 16px", minWidth: "max-content" }}>
 
           {/* Winners Bracket / Single-elim rounds */}
-          {allWbRounds.map((round, i) => (
-            <div key={`wb-${i}`} id={`round-col-wb-${i}`} style={{ flexShrink: 0, paddingRight: scale.tier === "desktop" ? 40 : 28 }}>
-              <RoundCol
-                title={wbLabel(i, allWbRounds.length)}
-                matchIds={round} matchMap={matchMap}
-                onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
-                isLosers={false} useScoring={useScoring} scale={scale}
-                editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.wb}
-                spacing={Math.min(48, i === 0 ? 12 : 12 * Math.pow(2, Math.max(0, i - (prelimRound ? 1 : 0))))}
-              />
-            </div>
-          ))}
+          {allWbRounds.map((round, i) => {
+            const isActive = activeTab === `wb-${i}`;
+            return (
+              <div key={`wb-${i}`} id={`round-col-wb-${i}`} style={{ flexShrink: 0, paddingRight: scale.tier === "desktop" ? 40 : 28 }}>
+                <RoundCol
+                  title={wbLabel(i, allWbRounds.length)}
+                  matchIds={round} matchMap={matchMap}
+                  onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
+                  isLosers={false} useScoring={useScoring} scale={scale}
+                  editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.wb}
+                  isActive={isActive}
+                  spacing={isActive ? Math.min(48, i === 0 ? 12 : 12 * Math.pow(2, Math.max(0, i - (prelimRound ? 1 : 0)))) : 6}
+                />
+              </div>
+            );
+          })}
 
           {/* Grand Final column (double-elim only) */}
           {!isSingleElim && grandFinalEnabled && (
@@ -2235,16 +2242,21 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
           {!isSingleElim && losersRounds.length > 0 && (
             <>
               <div style={{ flexShrink: 0, width: 2, alignSelf: "stretch", background: BORDER, marginRight: scale.tier === "desktop" ? 40 : 28 }} />
-              {losersRounds.map((round, i) => (
-                <div key={`lb-${i}`} id={`round-col-lb-${i}`} style={{ flexShrink: 0, paddingRight: scale.tier === "desktop" ? 40 : 28 }}>
-                  <RoundCol
-                    title={lbLabel(i)} matchIds={round} matchMap={matchMap}
-                    onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
-                    isLosers={true} useScoring={useScoring} scale={scale} spacing={12}
-                    editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.lb}
-                  />
-                </div>
-              ))}
+              {losersRounds.map((round, i) => {
+                const isActive = activeTab === `lb-${i}`;
+                return (
+                  <div key={`lb-${i}`} id={`round-col-lb-${i}`} style={{ flexShrink: 0, paddingRight: scale.tier === "desktop" ? 40 : 28 }}>
+                    <RoundCol
+                      title={lbLabel(i)} matchIds={round} matchMap={matchMap}
+                      onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
+                      isLosers={true} useScoring={useScoring} scale={scale}
+                      editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.lb}
+                      isActive={isActive}
+                      spacing={isActive ? 20 : 6}
+                    />
+                  </div>
+                );
+              })}
             </>
           )}
 
@@ -2259,6 +2271,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                 {pr.map((round, i) => {
                   const isLast = i === pr.length - 1;
                   const lbl = isLast ? "Plate Final" : i === pr.length - 2 ? "Semi Final" : i === pr.length - 3 ? "Qtr Final" : `Plate Rd ${i + 1}`;
+                  const isActive = activeTab === `plate-${i}`;
                   return (
                     <div key={`plate-${i}`} id={`round-col-plate-${i}`} style={{ flexShrink: 0, paddingRight: scale.tier === "desktop" ? 40 : 28 }}>
                       <RoundCol
@@ -2268,7 +2281,8 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                         onScore={(id, who, d) => setPlateMatchMap(prev => applyScoreChange(prev, id, who, d))}
                         isLosers={false} useScoring={useScoring} scale={scale}
                         editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.plate}
-                        spacing={Math.min(48, i === 0 ? 12 : 12 * Math.pow(2, i))}
+                        isActive={isActive}
+                        spacing={isActive ? Math.min(48, i === 0 ? 12 : 12 * Math.pow(2, i)) : 6}
                       />
                     </div>
                   );
