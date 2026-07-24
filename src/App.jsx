@@ -626,38 +626,45 @@ function bracketCardCenter(offset, gap, cardHeight, k) {
 }
 
 // Draws the elbow ("bracket") connector lines in the gutter between two
-// adjacent rounds. Only handles the clean 2:1 (pair) and 1:1 (straight)
-// cases - if the round sizes don't relate cleanly, nothing is drawn so we
-// never show a misleading connection.
-function BracketConnectors({ feederCount, targetCount, feederOffset, feederGap, targetOffset, targetGap, cardHeight, gutterWidth, color }) {
-  if (!feederCount || !targetCount || !cardHeight) return null;
+// adjacent rounds. Uses each target match's REAL feeders (p1FromMatchId /
+// p2FromMatchId) rather than assuming positional 2:1 pairing - this matters
+// because LB "merge" rounds pair an LB survivor with a freshly-dropped WB
+// loser, which breaks any simple index-based pairing assumption.
+function BracketConnectors({ feederRound, targetRound, matchMap, feederOffset, feederGap, targetOffset, targetGap, cardHeight, gutterWidth, color }) {
+  if (!feederRound || !targetRound || !feederRound.length || !targetRound.length || !cardHeight || !matchMap) return null;
   const lineStyle = { stroke: color, strokeWidth: 2, transition: "x1 0.35s cubic-bezier(0.4,0,0.2,1), x2 0.35s cubic-bezier(0.4,0,0.2,1), y1 0.35s cubic-bezier(0.4,0,0.2,1), y2 0.35s cubic-bezier(0.4,0,0.2,1)" };
   const xStart = 0, xMid = gutterWidth / 2, xEnd = gutterWidth;
+  const feederIndexOf = new Map(feederRound.map((id, idx) => [id, idx]));
   const lines = [];
 
-  if (feederCount === targetCount * 2) {
-    // Standard pair -> single elbow connector
-    for (let r = 0; r < targetCount; r++) {
-      const y1 = bracketCardCenter(feederOffset, feederGap, cardHeight, 2 * r);
-      const y2 = bracketCardCenter(feederOffset, feederGap, cardHeight, 2 * r + 1);
-      const yMid = bracketCardCenter(targetOffset, targetGap, cardHeight, r);
-      lines.push(<line key={`a-${r}`} x1={xStart} y1={y1} x2={xMid} y2={y1} style={lineStyle} />);
-      lines.push(<line key={`b-${r}`} x1={xStart} y1={y2} x2={xMid} y2={y2} style={lineStyle} />);
-      lines.push(<line key={`c-${r}`} x1={xMid} y1={y1} x2={xMid} y2={y2} style={lineStyle} />);
-      lines.push(<line key={`d-${r}`} x1={xMid} y1={yMid} x2={xEnd} y2={yMid} style={lineStyle} />);
-    }
-  } else if (feederCount === targetCount) {
-    // Straight 1:1 connector (e.g. WB final -> Grand Final)
-    for (let r = 0; r < targetCount; r++) {
-      const y = bracketCardCenter(feederOffset, feederGap, cardHeight, r);
-      lines.push(<line key={`s-${r}`} x1={xStart} y1={y} x2={xEnd} y2={y} style={lineStyle} />);
-    }
-  } else {
-    return null;
-  }
+  targetRound.forEach((targetId, r) => {
+    const t = matchMap[targetId];
+    if (!t) return;
+    const feederIds = [t.p1FromMatchId, t.p2FromMatchId].filter(id => id != null && feederIndexOf.has(id));
+    const yMid = bracketCardCenter(targetOffset, targetGap, cardHeight, r);
 
-  const feederExtent = feederOffset + feederCount * (cardHeight + feederGap);
-  const targetExtent = targetOffset + targetCount * (cardHeight + targetGap);
+    if (feederIds.length === 2) {
+      // Both slots trace back into this round - classic elbow connector
+      const y1 = bracketCardCenter(feederOffset, feederGap, cardHeight, feederIndexOf.get(feederIds[0]));
+      const y2 = bracketCardCenter(feederOffset, feederGap, cardHeight, feederIndexOf.get(feederIds[1]));
+      lines.push(<line key={`a-${targetId}`} x1={xStart} y1={y1} x2={xMid} y2={y1} style={lineStyle} />);
+      lines.push(<line key={`b-${targetId}`} x1={xStart} y1={y2} x2={xMid} y2={y2} style={lineStyle} />);
+      lines.push(<line key={`c-${targetId}`} x1={xMid} y1={y1} x2={xMid} y2={y2} style={lineStyle} />);
+      lines.push(<line key={`d-${targetId}`} x1={xMid} y1={yMid} x2={xEnd} y2={yMid} style={lineStyle} />);
+    } else if (feederIds.length === 1) {
+      // Only one slot traces back into this round (the other is a bye, a
+      // direct seed, or - in LB merge rounds - a loser dropping in from a
+      // WB round we're not drawing a connector to here). Draw one line.
+      const y = bracketCardCenter(feederOffset, feederGap, cardHeight, feederIndexOf.get(feederIds[0]));
+      lines.push(<line key={`s-${targetId}`} x1={xStart} y1={y} x2={xEnd} y2={yMid} style={lineStyle} />);
+    }
+    // 0 feeders in this round: nothing traceable here, draw nothing.
+  });
+
+  if (!lines.length) return null;
+
+  const feederExtent = feederOffset + feederRound.length * (cardHeight + feederGap);
+  const targetExtent = targetOffset + targetRound.length * (cardHeight + targetGap);
   const height = Math.max(feederExtent, targetExtent) + 40;
 
   return (
@@ -2411,7 +2418,8 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                 {nextCount > 0 && (
                   <div style={{ flexShrink: 0, width: gutterWidth, paddingTop: BRACKET_TITLE_BLOCK_HEIGHT }}>
                     <BracketConnectors
-                      feederCount={round.length} targetCount={nextCount}
+                      feederRound={round} targetRound={isLastWbRound ? [grandFinalId] : allWbRounds[i + 1]}
+                      matchMap={matchMap}
                       feederOffset={wbLayout.offsets[i]} feederGap={wbLayout.gaps[i]}
                       targetOffset={isLastWbRound ? gfOffset : wbLayout.offsets[i + 1]}
                       targetGap={isLastWbRound ? 0 : wbLayout.gaps[i + 1]}
@@ -2488,7 +2496,8 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                     {nextCount > 0 && (
                       <div style={{ flexShrink: 0, width: gutterWidth, paddingTop: BRACKET_TITLE_BLOCK_HEIGHT }}>
                         <BracketConnectors
-                          feederCount={round.length} targetCount={nextCount}
+                          feederRound={round} targetRound={losersRounds[i + 1]}
+                          matchMap={matchMap}
                           feederOffset={lbLayout.offsets[i]} feederGap={lbLayout.gaps[i]}
                           targetOffset={lbLayout.offsets[i + 1]} targetGap={lbLayout.gaps[i + 1]}
                           cardHeight={cardHeight} gutterWidth={gutterWidth} color={BLUE}
@@ -2532,7 +2541,8 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                       {nextCount > 0 && (
                         <div style={{ flexShrink: 0, width: gutterWidth, paddingTop: BRACKET_TITLE_BLOCK_HEIGHT }}>
                           <BracketConnectors
-                            feederCount={round.length} targetCount={nextCount}
+                            feederRound={round} targetRound={pr[i + 1]}
+                            matchMap={pm}
                             feederOffset={plateLayout.offsets[i]} feederGap={plateLayout.gaps[i]}
                             targetOffset={plateLayout.offsets[i + 1]} targetGap={plateLayout.gaps[i + 1]}
                             cardHeight={cardHeight} gutterWidth={gutterWidth} color={ORANGE}
