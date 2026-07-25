@@ -538,73 +538,50 @@ function slotLabel(matchMap, matchId, slot) {
     : `Winner of Match ${src.matchNum}`;
 }
 // --- Bracket layout math -------------------------------------------------------
-// Computes an explicit vertical CENTER (px) for every card in every round,
-// driven entirely by each match's REAL feeders (p1FromMatchId/p2FromMatchId)
-// rather than assuming every round has exactly half as many matches as the
-// previous one. This is what makes the layout correct for:
-//   - normal single/double-elim rounds (2 feeders -> centered midpoint)
-//   - LB "merge" rounds where a survivor faces a fresh WB drop-in (1 feeder
-//     -> lines up directly across from that feeder)
-//   - LB rounds that run PARALLEL rather than converging (e.g. an LB Prelim
-//     round and a same-size LB Round 1 that don't feed each other) -> no
-//     feeders found in the previous round, so it falls back to tight
-//     sequential stacking instead of forcing incorrect "pair" spacing.
-// A minimum-gap pass afterwards guarantees cards can never visually overlap
-// even if two computed centers land close together.
+// Each round gets its OWN internal card gap - generous when it's the round
+// currently being viewed, tight otherwise - chosen directly and never
+// inherited or compounded from any other round. That's what guarantees a
+// round always visibly collapses the instant it stops being the active one,
+// regardless of how spread out its neighbours are.
+//
+// Rounds are then vertically centered as whole blocks against the round
+// before them (matching total heights), rather than trying to trace every
+// individual match back to its exact feeders. This is a looser
+// approximation than true per-match centering, but it's what keeps the
+// layout robust: it can never runaway/compound, it collapses correctly
+// every time, and it naturally puts same-size rounds (like an LB round that
+// runs parallel to the next one instead of converging into it) directly
+// side by side, which is exactly what should happen for those.
 const BRACKET_TIGHT_ACTIVE_GAP = 14;
 const BRACKET_TIGHT_COLLAPSE_GAP = 6;
 const BRACKET_TITLE_BLOCK_HEIGHT = 26;
 
-// `centerOf` is a matchId -> y-center map shared ACROSS bracket sections.
-// This matters for the Losers Bracket: an LB "merge" round match has one
-// feeder from the previous LB round AND one feeder that's a fresh loser
-// dropping in from a WB round (a totally different `rounds` array). Looking
-// only at "the previous round in this array" would find just the LB-side
-// feeder and silently ignore the WB-side one, which both loses real
-// centering accuracy AND stops the round from ever visually compacting when
-// its LB neighbour happens to be the expanded/active one (it would just
-// inherit that neighbour's spread-out spacing with nothing pulling it back
-// in). Passing in a `centerOf` map already seeded with the WB round centers
-// lets every LB match average BOTH of its real feeders, wherever they live.
-function computeBracketLayout(rounds, matchMap, activeIndex, cardHeight, centerOf) {
-  const positions = centerOf || {};
-  const centers = [];
-
-  for (let i = 0; i < rounds.length; i++) {
-    const round = rounds[i];
-    const gap = i === activeIndex ? BRACKET_TIGHT_ACTIVE_GAP : BRACKET_TIGHT_COLLAPSE_GAP;
-
-    const ideal = round.map((id) => {
-      const m = matchMap[id];
-      if (!m) return null;
-      const feederIds = [m.p1FromMatchId, m.p2FromMatchId].filter(fid => fid != null && positions[fid] != null);
-      if (feederIds.length === 2) {
-        return (positions[feederIds[0]] + positions[feederIds[1]]) / 2;
-      }
-      if (feederIds.length === 1) {
-        return positions[feederIds[0]];
-      }
-      return null;
-    });
-
-    const roundCenters = [];
-    let cursor = 0;
-    for (let k = 0; k < round.length; k++) {
-      let top = ideal[k] != null ? ideal[k] - cardHeight / 2 : cursor;
-      if (top < cursor) top = cursor;
-      const center = top + cardHeight / 2;
-      roundCenters.push(center);
-      positions[round[k]] = center;
-      cursor = top + cardHeight + gap;
-    }
-    centers.push(roundCenters);
-  }
-
-  return centers;
+function computeRoundLayout(rounds, activeIndex, cardHeight) {
+  const gaps = rounds.map((_, i) => (i === activeIndex ? BRACKET_TIGHT_ACTIVE_GAP : BRACKET_TIGHT_COLLAPSE_GAP));
+  const totalHeights = rounds.map((round, i) => {
+    const count = round.length || 1;
+    return count * cardHeight + Math.max(0, count - 1) * gaps[i];
+  });
+  const offsets = rounds.map((_, i) => {
+    if (i === 0) return 0;
+    return Math.max(0, (totalHeights[i - 1] - totalHeights[i]) / 2);
+  });
+  return { gaps, offsets };
 }
 
-function BracketConnectors({ feederRound, targetRound, matchMap, feederCenters, targetCenters, gutterWidth, color }) {
-  if (!feederRound || !targetRound || !feederRound.length || !targetRound.length || !matchMap || !feederCenters || !targetCenters) return null;
+// Vertical center (relative to that round's card-list top) of card k in a
+// round with the given offset/gap/cardHeight.
+function bracketCardCenter(offset, gap, cardHeight, k) {
+  return offset + k * (cardHeight + gap) + cardHeight / 2;
+}
+
+// Draws the elbow ("bracket") connector lines in the gutter between two
+// adjacent rounds. Uses each target match's REAL feeders (p1FromMatchId /
+// p2FromMatchId) rather than assuming positional 2:1 pairing - this matters
+// because LB "merge" rounds pair an LB survivor with a freshly-dropped WB
+// loser, which breaks any simple index-based pairing assumption.
+function BracketConnectors({ feederRound, targetRound, matchMap, feederOffset, feederGap, targetOffset, targetGap, cardHeight, gutterWidth, color }) {
+  if (!feederRound || !targetRound || !feederRound.length || !targetRound.length || !cardHeight || !matchMap) return null;
   const lineStyle = { stroke: color, strokeWidth: 2, transition: "x1 0.35s cubic-bezier(0.4,0,0.2,1), x2 0.35s cubic-bezier(0.4,0,0.2,1), y1 0.35s cubic-bezier(0.4,0,0.2,1), y2 0.35s cubic-bezier(0.4,0,0.2,1)" };
   const xStart = 0, xMid = gutterWidth / 2, xEnd = gutterWidth;
   const feederIndexOf = new Map(feederRound.map((id, idx) => [id, idx]));
@@ -614,24 +591,31 @@ function BracketConnectors({ feederRound, targetRound, matchMap, feederCenters, 
     const t = matchMap[targetId];
     if (!t) return;
     const feederIds = [t.p1FromMatchId, t.p2FromMatchId].filter(id => id != null && feederIndexOf.has(id));
-    const yMid = targetCenters[r];
+    const yMid = bracketCardCenter(targetOffset, targetGap, cardHeight, r);
 
     if (feederIds.length === 2) {
-      const y1 = feederCenters[feederIndexOf.get(feederIds[0])];
-      const y2 = feederCenters[feederIndexOf.get(feederIds[1])];
+      // Both slots trace back into this round - classic elbow connector
+      const y1 = bracketCardCenter(feederOffset, feederGap, cardHeight, feederIndexOf.get(feederIds[0]));
+      const y2 = bracketCardCenter(feederOffset, feederGap, cardHeight, feederIndexOf.get(feederIds[1]));
       lines.push(<line key={`a-${targetId}`} x1={xStart} y1={y1} x2={xMid} y2={y1} style={lineStyle} />);
       lines.push(<line key={`b-${targetId}`} x1={xStart} y1={y2} x2={xMid} y2={y2} style={lineStyle} />);
       lines.push(<line key={`c-${targetId}`} x1={xMid} y1={y1} x2={xMid} y2={y2} style={lineStyle} />);
       lines.push(<line key={`d-${targetId}`} x1={xMid} y1={yMid} x2={xEnd} y2={yMid} style={lineStyle} />);
     } else if (feederIds.length === 1) {
-      const y = feederCenters[feederIndexOf.get(feederIds[0])];
+      // Only one slot traces back into this round (the other is a bye, a
+      // direct seed, or - in LB merge rounds - a loser dropping in from a
+      // WB round we're not drawing a connector to here). Draw one line.
+      const y = bracketCardCenter(feederOffset, feederGap, cardHeight, feederIndexOf.get(feederIds[0]));
       lines.push(<line key={`s-${targetId}`} x1={xStart} y1={y} x2={xEnd} y2={yMid} style={lineStyle} />);
     }
+    // 0 feeders in this round: nothing traceable here, draw nothing.
   });
 
   if (!lines.length) return null;
 
-  const height = Math.max(Math.max(...feederCenters), Math.max(...targetCenters)) + 40;
+  const feederExtent = feederOffset + feederRound.length * (cardHeight + feederGap);
+  const targetExtent = targetOffset + targetRound.length * (cardHeight + targetGap);
+  const height = Math.max(feederExtent, targetExtent) + 40;
 
   return (
     <svg width={gutterWidth} height={height} style={{ display: "block", overflow: "visible" }}>
@@ -1026,10 +1010,8 @@ function SaveBadge({ status, error }) {
   );
 }
 
-function RoundCol({ title, matchIds, matchMap, onPickWinner, onChangeWinner, onScore, isLosers, isGrandFinal, cardCenters, cardHeight, useScoring, scale, editingMatchId, setEditingMatchId, readOnly, isActive }) {
+function RoundCol({ title, matchIds, matchMap, onPickWinner, onChangeWinner, onScore, isLosers, isGrandFinal, spacing, offset, cardHeight, useScoring, scale, editingMatchId, setEditingMatchId, readOnly, isActive }) {
   const ids = Array.isArray(matchIds) ? matchIds : [matchIds];
-  const centers = cardCenters || ids.map((_, k) => k * ((cardHeight || 0) + 16) + (cardHeight || 0) / 2);
-  const ch = cardHeight || 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flexShrink: 0 }}>
@@ -1042,22 +1024,22 @@ function RoundCol({ title, matchIds, matchMap, onPickWinner, onChangeWinner, onS
         transition: "opacity 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
       }}>{title}</div>
 
-      <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
-        {ids.map((id, k) => {
-          const top = centers[k] - ch / 2;
-          const prevBottom = k === 0 ? 0 : (centers[k - 1] + ch / 2);
-          const marginTop = Math.max(0, top - prevBottom);
-          return (
-            <div key={id} data-bracket-card="true" style={{ marginTop, transition: "margin-top 0.35s cubic-bezier(0.4, 0, 0.2, 1)" }}>
-              <MatchCard
-                matchId={id} matchMap={matchMap}
-                onPickWinner={onPickWinner} onChangeWinner={onChangeWinner} onScore={onScore}
-                isLosers={isLosers} isGrandFinal={isGrandFinal} useScoring={useScoring} scale={scale}
-                editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={readOnly}
-              />
-            </div>
-          );
-        })}
+      <div style={{
+        display: "flex", flexDirection: "column", gap: (spacing != null ? spacing : 16),
+        justifyContent: "flex-start", flex: 1,
+        paddingTop: offset || 0,
+        transition: "gap 0.35s cubic-bezier(0.4, 0, 0.2, 1), padding-top 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
+      }}>
+        {ids.map(id => (
+          <div key={id} data-bracket-card="true">
+            <MatchCard
+              matchId={id} matchMap={matchMap}
+              onPickWinner={onPickWinner} onChangeWinner={onChangeWinner} onScore={onScore}
+              isLosers={isLosers} isGrandFinal={isGrandFinal} useScoring={useScoring} scale={scale}
+              editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={readOnly}
+            />
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -2099,34 +2081,25 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
     return i === 0 ? "LB Round 1" : `LB Round ${i + 1}`;
   };
 
-  // WB round-by-round layout, driven by whichever WB round is currently
-  // active. Every card's y-center is derived from its REAL feeders in
-  // matchMap (see computeBracketLayout), so Semis/Final always land exactly
-  // centered on the matches that feed them, with no runaway gap growth.
+  // Round-by-round layout, computed independently per bracket section (WB,
+  // LB, Plate) using each round's own scalar gap/offset - see
+  // computeRoundLayout. Every round always collapses the instant it's not
+  // the active one, since its gap is chosen directly rather than inherited.
   const gutterWidth = scale.tier === "desktop" ? 40 : 28;
   const wbActiveIndex = activeSection === "wb" ? parseInt(activeTab.split("-")[1], 10) : -1;
-  const wbCenterOf = {};
-  const wbCenters = computeBracketLayout(allWbRounds, matchMap, wbActiveIndex, cardHeight, wbCenterOf);
+  const wbLayout = computeRoundLayout(allWbRounds, wbActiveIndex, cardHeight);
   // GF's card must line up with the WB final (single match, 1:1), so it
-  // simply inherits the WB final round's own center.
-  const gfCenter = (wbCenters[allWbRounds.length - 1] && wbCenters[allWbRounds.length - 1][0]) || cardHeight / 2;
+  // simply inherits the WB final round's own offset.
+  const gfOffset = wbLayout.offsets[allWbRounds.length - 1] || 0;
 
-  // Plate round-by-round layout (independent bracket, own active state, no
-  // cross-references to WB/LB needed since it never shares matches with them).
+  // Plate round-by-round layout (independent bracket, own active state)
   const plateRoundsArr = plateData ? (plateData.rounds || []) : [];
   const plateActiveIndex = activeSection === "plate" ? parseInt(activeTab.split("-")[1], 10) : -1;
-  const plateCenters = plateData ? computeBracketLayout(plateRoundsArr, plateData.matchMap, plateActiveIndex, cardHeight) : [];
+  const plateLayout = computeRoundLayout(plateRoundsArr, plateActiveIndex, cardHeight);
 
-  // LB round-by-round layout (own active state, its own gap collapsing).
-  // Crucially this is seeded with a COPY of the WB centers: an LB "merge"
-  // round match has one feeder in the previous LB round and one feeder that
-  // is a fresh loser dropping in from a WB round. Sharing the position map
-  // lets that match average BOTH real feeders (instead of only ever seeing
-  // whichever one happens to sit in "the previous LB round"), which is what
-  // gives the LB Prelim/Round 1/merge rounds correct, compact positions
-  // instead of just inheriting whatever spread their WB-side neighbour has.
+  // LB round-by-round layout (independent bracket, own active state)
   const lbActiveIndex = activeSection === "lb" ? parseInt(activeTab.split("-")[1], 10) : -1;
-  const lbCenters = computeBracketLayout(losersRounds, matchMap, lbActiveIndex, cardHeight, { ...wbCenterOf });
+  const lbLayout = computeRoundLayout(losersRounds, lbActiveIndex, cardHeight);
 
   const roundTabs = [
     ...allWbRounds.map((_, i) => ({
@@ -2314,7 +2287,8 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                     isLosers={false} useScoring={useScoring} scale={scale}
                     editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.wb}
                     isActive={isActive}
-                    cardCenters={wbCenters[i]}
+                    spacing={wbLayout.gaps[i]}
+                    offset={wbLayout.offsets[i]}
                     cardHeight={cardHeight}
                   />
                 </div>
@@ -2323,9 +2297,10 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                     <BracketConnectors
                       feederRound={round} targetRound={isLastWbRound ? [grandFinalId] : allWbRounds[i + 1]}
                       matchMap={matchMap}
-                      feederCenters={wbCenters[i]}
-                      targetCenters={isLastWbRound ? [gfCenter] : wbCenters[i + 1]}
-                      gutterWidth={gutterWidth} color={isLastWbRound ? GOLD : PURPLE}
+                      feederOffset={wbLayout.offsets[i]} feederGap={wbLayout.gaps[i]}
+                      targetOffset={isLastWbRound ? gfOffset : wbLayout.offsets[i + 1]}
+                      targetGap={isLastWbRound ? 0 : wbLayout.gaps[i + 1]}
+                      cardHeight={cardHeight} gutterWidth={gutterWidth} color={isLastWbRound ? GOLD : PURPLE}
                     />
                   </div>
                 )}
@@ -2336,7 +2311,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
           {!isSingleElim && grandFinalEnabled && (
             <div id="round-col-gf-0" style={{ flexShrink: 0, paddingRight: scale.tier === "desktop" ? 40 : 28 }}>
               <div style={{ fontSize: 11, color: GOLD, letterSpacing: "0.08em", fontWeight: 700, marginBottom: 12, textTransform: "uppercase" }}>Grand Final</div>
-              <div style={{ paddingTop: gfCenter - cardHeight / 2, transition: "padding-top 0.35s cubic-bezier(0.4, 0, 0.2, 1)" }}>
+              <div style={{ paddingTop: gfOffset, transition: "padding-top 0.35s cubic-bezier(0.4, 0, 0.2, 1)" }}>
                 <div data-bracket-card="true">
                   <MatchCard matchId={grandFinalId} matchMap={matchMap}
                     onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
@@ -2387,7 +2362,8 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                         isLosers={true} useScoring={useScoring} scale={scale}
                         editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.lb}
                         isActive={isActive}
-                        cardCenters={lbCenters[i]}
+                        spacing={lbLayout.gaps[i]}
+                        offset={lbLayout.offsets[i]}
                         cardHeight={cardHeight}
                       />
                     </div>
@@ -2396,8 +2372,9 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                         <BracketConnectors
                           feederRound={round} targetRound={losersRounds[i + 1]}
                           matchMap={matchMap}
-                          feederCenters={lbCenters[i]} targetCenters={lbCenters[i + 1]}
-                          gutterWidth={gutterWidth} color={BLUE}
+                          feederOffset={lbLayout.offsets[i]} feederGap={lbLayout.gaps[i]}
+                          targetOffset={lbLayout.offsets[i + 1]} targetGap={lbLayout.gaps[i + 1]}
+                          cardHeight={cardHeight} gutterWidth={gutterWidth} color={BLUE}
                         />
                       </div>
                     )}
@@ -2430,7 +2407,8 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                           isLosers={false} useScoring={useScoring} scale={scale}
                           editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.plate}
                           isActive={isActive}
-                          cardCenters={plateCenters[i]}
+                          spacing={plateLayout.gaps[i]}
+                          offset={plateLayout.offsets[i]}
                           cardHeight={cardHeight}
                         />
                       </div>
@@ -2439,8 +2417,9 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                           <BracketConnectors
                             feederRound={round} targetRound={pr[i + 1]}
                             matchMap={pm}
-                            feederCenters={plateCenters[i]} targetCenters={plateCenters[i + 1]}
-                            gutterWidth={gutterWidth} color={ORANGE}
+                            feederOffset={plateLayout.offsets[i]} feederGap={plateLayout.gaps[i]}
+                            targetOffset={plateLayout.offsets[i + 1]} targetGap={plateLayout.gaps[i + 1]}
+                            cardHeight={cardHeight} gutterWidth={gutterWidth} color={ORANGE}
                           />
                         </div>
                       )}
