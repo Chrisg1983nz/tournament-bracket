@@ -555,27 +555,34 @@ const BRACKET_TIGHT_ACTIVE_GAP = 14;
 const BRACKET_TIGHT_COLLAPSE_GAP = 6;
 const BRACKET_TITLE_BLOCK_HEIGHT = 26;
 
-function computeBracketLayout(rounds, matchMap, activeIndex, cardHeight) {
+// `centerOf` is a matchId -> y-center map shared ACROSS bracket sections.
+// This matters for the Losers Bracket: an LB "merge" round match has one
+// feeder from the previous LB round AND one feeder that's a fresh loser
+// dropping in from a WB round (a totally different `rounds` array). Looking
+// only at "the previous round in this array" would find just the LB-side
+// feeder and silently ignore the WB-side one, which both loses real
+// centering accuracy AND stops the round from ever visually compacting when
+// its LB neighbour happens to be the expanded/active one (it would just
+// inherit that neighbour's spread-out spacing with nothing pulling it back
+// in). Passing in a `centerOf` map already seeded with the WB round centers
+// lets every LB match average BOTH of its real feeders, wherever they live.
+function computeBracketLayout(rounds, matchMap, activeIndex, cardHeight, centerOf) {
+  const positions = centerOf || {};
   const centers = [];
 
   for (let i = 0; i < rounds.length; i++) {
     const round = rounds[i];
     const gap = i === activeIndex ? BRACKET_TIGHT_ACTIVE_GAP : BRACKET_TIGHT_COLLAPSE_GAP;
-    const prevRound = i > 0 ? rounds[i - 1] : null;
-    const prevCenters = i > 0 ? centers[i - 1] : null;
-    const prevIndexOf = prevRound ? new Map(prevRound.map((id, idx) => [id, idx])) : null;
 
     const ideal = round.map((id) => {
       const m = matchMap[id];
-      if (!m || !prevRound) return null;
-      const feederIds = [m.p1FromMatchId, m.p2FromMatchId].filter(fid => fid != null && prevIndexOf.has(fid));
+      if (!m) return null;
+      const feederIds = [m.p1FromMatchId, m.p2FromMatchId].filter(fid => fid != null && positions[fid] != null);
       if (feederIds.length === 2) {
-        const y1 = prevCenters[prevIndexOf.get(feederIds[0])];
-        const y2 = prevCenters[prevIndexOf.get(feederIds[1])];
-        return (y1 + y2) / 2;
+        return (positions[feederIds[0]] + positions[feederIds[1]]) / 2;
       }
       if (feederIds.length === 1) {
-        return prevCenters[prevIndexOf.get(feederIds[0])];
+        return positions[feederIds[0]];
       }
       return null;
     });
@@ -585,7 +592,9 @@ function computeBracketLayout(rounds, matchMap, activeIndex, cardHeight) {
     for (let k = 0; k < round.length; k++) {
       let top = ideal[k] != null ? ideal[k] - cardHeight / 2 : cursor;
       if (top < cursor) top = cursor;
-      roundCenters.push(top + cardHeight / 2);
+      const center = top + cardHeight / 2;
+      roundCenters.push(center);
+      positions[round[k]] = center;
       cursor = top + cardHeight + gap;
     }
     centers.push(roundCenters);
@@ -2096,23 +2105,28 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
   // centered on the matches that feed them, with no runaway gap growth.
   const gutterWidth = scale.tier === "desktop" ? 40 : 28;
   const wbActiveIndex = activeSection === "wb" ? parseInt(activeTab.split("-")[1], 10) : -1;
-  const wbCenters = computeBracketLayout(allWbRounds, matchMap, wbActiveIndex, cardHeight);
+  const wbCenterOf = {};
+  const wbCenters = computeBracketLayout(allWbRounds, matchMap, wbActiveIndex, cardHeight, wbCenterOf);
   // GF's card must line up with the WB final (single match, 1:1), so it
   // simply inherits the WB final round's own center.
   const gfCenter = (wbCenters[allWbRounds.length - 1] && wbCenters[allWbRounds.length - 1][0]) || cardHeight / 2;
 
-  // Plate round-by-round layout (independent bracket, own active state)
+  // Plate round-by-round layout (independent bracket, own active state, no
+  // cross-references to WB/LB needed since it never shares matches with them).
   const plateRoundsArr = plateData ? (plateData.rounds || []) : [];
   const plateActiveIndex = activeSection === "plate" ? parseInt(activeTab.split("-")[1], 10) : -1;
   const plateCenters = plateData ? computeBracketLayout(plateRoundsArr, plateData.matchMap, plateActiveIndex, cardHeight) : [];
 
-  // LB round-by-round layout (independent bracket, own active state). LB
-  // round sizes don't always halve cleanly (some rounds run parallel rather
-  // than converging, e.g. an LB Prelim next to a same-size LB Round 1) - the
-  // feeder-based algorithm naturally falls back to tight side-by-side
-  // stacking in that case instead of forcing incorrect "pair" spacing.
+  // LB round-by-round layout (own active state, its own gap collapsing).
+  // Crucially this is seeded with a COPY of the WB centers: an LB "merge"
+  // round match has one feeder in the previous LB round and one feeder that
+  // is a fresh loser dropping in from a WB round. Sharing the position map
+  // lets that match average BOTH real feeders (instead of only ever seeing
+  // whichever one happens to sit in "the previous LB round"), which is what
+  // gives the LB Prelim/Round 1/merge rounds correct, compact positions
+  // instead of just inheriting whatever spread their WB-side neighbour has.
   const lbActiveIndex = activeSection === "lb" ? parseInt(activeTab.split("-")[1], 10) : -1;
-  const lbCenters = computeBracketLayout(losersRounds, matchMap, lbActiveIndex, cardHeight);
+  const lbCenters = computeBracketLayout(losersRounds, matchMap, lbActiveIndex, cardHeight, { ...wbCenterOf });
 
   const roundTabs = [
     ...allWbRounds.map((_, i) => ({
