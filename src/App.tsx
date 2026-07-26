@@ -552,9 +552,16 @@ function slotLabel(matchMap, matchId, slot) {
 // Spacing is a single fixed value everywhere - no per-round "active vs
 // collapsed" toggle. There's nothing to compute and nothing to get subtly
 // wrong: every round is always exactly this compact, all the time.
+//
+// This component ONLY handles positioning. Connector lines are drawn by a
+// separate overlay (BracketConnectorsOverlay) that measures the REAL
+// rendered position of each card and draws a short line directly between a
+// match and its immediate feeders - not a border spanning this node's whole
+// nested subtree, which is what a CSS-only connector would end up doing and
+// is what caused the long stray-looking lines.
 const BRACKET_GAP = 14;
 
-function BracketNode({ matchId, matchMap, inScopeSet, isLosers, grandFinalId, onPickWinner, onChangeWinner, onScore, useScoring, scale, editingMatchId, setEditingMatchId, readOnly, color, gutter }) {
+function BracketNode({ matchId, matchMap, inScopeSet, isLosers, grandFinalId, onPickWinner, onChangeWinner, onScore, useScoring, scale, editingMatchId, setEditingMatchId, readOnly, gutter }) {
   const m = matchMap[matchId];
   if (!m) return null;
 
@@ -564,7 +571,7 @@ function BracketNode({ matchId, matchMap, inScopeSet, isLosers, grandFinalId, on
   const isGF = grandFinalId != null && matchId === grandFinalId;
 
   const cardEl = (
-    <div data-bracket-card="true">
+    <div data-bracket-card="true" data-match-id={matchId}>
       <MatchCard
         matchId={matchId} matchMap={matchMap}
         onPickWinner={onPickWinner} onChangeWinner={onChangeWinner} onScore={onScore}
@@ -576,25 +583,102 @@ function BracketNode({ matchId, matchMap, inScopeSet, isLosers, grandFinalId, on
 
   if (childCount === 0) return cardEl;
 
-  const childProps = { matchMap, inScopeSet, isLosers, grandFinalId, onPickWinner, onChangeWinner, onScore, useScoring, scale, editingMatchId, setEditingMatchId, readOnly, color, gutter };
+  const childProps = { matchMap, inScopeSet, isLosers, grandFinalId, onPickWinner, onChangeWinner, onScore, useScoring, scale, editingMatchId, setEditingMatchId, readOnly, gutter };
 
   return (
     <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
-      <div style={{
-        display: "flex", flexDirection: "column", gap: BRACKET_GAP,
-        borderRight: childCount === 2 ? `2px solid ${color}` : "none",
-      }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: BRACKET_GAP }}>
         {p1In && <BracketNode matchId={m.p1FromMatchId} {...childProps} />}
         {p2In && <BracketNode matchId={m.p2FromMatchId} {...childProps} />}
       </div>
-      {/* Connector tick: a stretched flex column so the short line is
-          centered by the browser against the full row height - same
-          technique as everything else here, no position:absolute. */}
-      <div style={{ width: gutter, flexShrink: 0, alignSelf: "stretch", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-        <div style={{ height: 2, width: "100%", background: color }} />
-      </div>
+      <div style={{ width: gutter, flexShrink: 0 }} />
       {cardEl}
     </div>
+  );
+}
+
+// Measures the REAL rendered position of every in-scope match card (after
+// paint, via ResizeObserver so it stays correct across re-renders) and
+// draws short connector lines directly between a match and its immediate
+// feeders' actual card edges - never a line spanning more than that.
+// Coordinates are computed relative to `contentRef`'s own box plus the
+// container's current scroll offset, which stays stable regardless of
+// scroll position (scrolling the container doesn't require re-measuring).
+function BracketConnectorsOverlay({ containerRef, contentRef, matchMap, matchIds, color }) {
+  const [lines, setLines] = useState([]);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const content = contentRef.current;
+    if (!container || !content) return;
+
+    const measure = () => {
+      const contentRect = content.getBoundingClientRect();
+      const scrollLeft = container.scrollLeft;
+      const scrollTop = container.scrollTop;
+      const pos = {};
+      matchIds.forEach((id) => {
+        const el = content.querySelector(`[data-match-id="${id}"]`);
+        if (!el) return;
+        const r = el.getBoundingClientRect();
+        pos[id] = {
+          top: r.top - contentRect.top + scrollTop,
+          left: r.left - contentRect.left + scrollLeft,
+          right: r.right - contentRect.left + scrollLeft,
+          centerY: r.top - contentRect.top + scrollTop + r.height / 2,
+        };
+      });
+
+      const nextLines = [];
+      matchIds.forEach((id) => {
+        const m = matchMap[id];
+        const target = pos[id];
+        if (!m || !target) return;
+        const feederIds = [m.p1FromMatchId, m.p2FromMatchId].filter((f) => f != null && pos[f]);
+        const xEnd = target.left;
+        if (feederIds.length === 2) {
+          const a = pos[feederIds[0]], b = pos[feederIds[1]];
+          const xStart = Math.max(a.right, b.right);
+          const xMid = (xStart + xEnd) / 2;
+          nextLines.push({ key: `${id}-elbow`, kind: "elbow", xStart, xMid, xEnd, y1: a.centerY, y2: b.centerY, yMid: target.centerY });
+        } else if (feederIds.length === 1) {
+          const a = pos[feederIds[0]];
+          nextLines.push({ key: `${id}-straight`, kind: "straight", xStart: a.right, xEnd, y1: a.centerY, y2: target.centerY });
+        }
+      });
+      setLines(nextLines);
+      setSize({ w: content.scrollWidth, h: content.scrollHeight });
+    };
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [containerRef, contentRef, matchMap, matchIds]);
+
+  if (!size.w || !size.h) return null;
+
+  return (
+    <svg
+      width={size.w} height={size.h}
+      style={{ position: "absolute", top: 0, left: 0, pointerEvents: "none", zIndex: 0 }}
+    >
+      {lines.map((l) => {
+        const lineStyle = { stroke: color, strokeWidth: 2 };
+        if (l.kind === "elbow") {
+          return (
+            <g key={l.key}>
+              <line x1={l.xStart} y1={l.y1} x2={l.xMid} y2={l.y1} style={lineStyle} />
+              <line x1={l.xStart} y1={l.y2} x2={l.xMid} y2={l.y2} style={lineStyle} />
+              <line x1={l.xMid} y1={l.y1} x2={l.xMid} y2={l.y2} style={lineStyle} />
+              <line x1={l.xMid} y1={l.yMid} x2={l.xEnd} y2={l.yMid} style={lineStyle} />
+            </g>
+          );
+        }
+        return <line key={l.key} x1={l.xStart} y1={l.y1} x2={l.xEnd} y2={l.y2} style={lineStyle} />;
+      })}
+    </svg>
   );
 }
 
@@ -1939,6 +2023,9 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
   const [showCloseOut, setShowCloseOut] = useState(false);
   const [editingMatchId, setEditingMatchId] = useState(null);
   const bracketScrollRef = useRef(null);
+  const wbTreeContentRef = useRef(null);
+  const lbTreeContentRef = useRef(null);
+  const plateTreeContentRef = useRef(null);
 
   const [cardHeight, setCardHeight] = useState(
     scale.tier === "desktop" ? 172 : scale.tier === "tablet" ? 156 : 144
@@ -2209,14 +2296,15 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
               color={PURPLE} cardWidth={cardWidth} gutter={gutterWidth}
               extraLabel={wbHasGF ? "Grand Final" : null} extraColor={GOLD}
             />
-            <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
+            <div ref={wbTreeContentRef} style={{ display: "flex", flexDirection: "row", alignItems: "center", position: "relative" }}>
+              <BracketConnectorsOverlay containerRef={bracketScrollRef} contentRef={wbTreeContentRef} matchMap={matchMap} matchIds={wbHasGF ? [...allWbRounds.flat(), grandFinalId] : allWbRounds.flat()} color={PURPLE} />
               <BracketNode
                 matchId={wbTreeRootId} matchMap={matchMap} inScopeSet={wbInScopeSet}
                 isLosers={false} grandFinalId={wbHasGF ? grandFinalId : null}
                 onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
                 useScoring={useScoring} scale={scale}
                 editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.wb}
-                color={PURPLE} gutter={gutterWidth}
+                gutter={gutterWidth}
               />
               {champion && (
                 <div style={{ marginLeft: 20, padding: 16, background: `${GOLD}14`, border: `1px solid ${GOLD}55`, borderRadius: 12, textAlign: "center", minWidth: 160, flexShrink: 0 }}>
@@ -2236,14 +2324,15 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                   count={losersRounds.length} labelFn={(i) => lbLabel(i)}
                   color={BLUE} cardWidth={cardWidth} gutter={gutterWidth}
                 />
-                <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
+                <div ref={lbTreeContentRef} style={{ display: "flex", flexDirection: "row", alignItems: "center", position: "relative" }}>
+                  <BracketConnectorsOverlay containerRef={bracketScrollRef} contentRef={lbTreeContentRef} matchMap={matchMap} matchIds={losersRounds.flat()} color={BLUE} />
                   <BracketNode
                     matchId={lbTreeRootId} matchMap={matchMap} inScopeSet={lbInScopeSet}
                     isLosers={true} grandFinalId={null}
                     onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
                     useScoring={useScoring} scale={scale}
                     editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.lb}
-                    color={BLUE} gutter={gutterWidth}
+                    gutter={gutterWidth}
                   />
                 </div>
               </div>
@@ -2261,7 +2350,8 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                     count={plateRoundsArr.length} labelFn={(i) => plateLabel(i, plateRoundsArr)}
                     color={ORANGE} cardWidth={cardWidth} gutter={gutterWidth}
                   />
-                  <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
+                  <div ref={plateTreeContentRef} style={{ display: "flex", flexDirection: "row", alignItems: "center", position: "relative" }}>
+                    <BracketConnectorsOverlay containerRef={bracketScrollRef} contentRef={plateTreeContentRef} matchMap={plateData.matchMap} matchIds={plateRoundsArr.flat()} color={ORANGE} />
                     <BracketNode
                       matchId={plateTreeRootId} matchMap={plateData.matchMap} inScopeSet={plateInScopeSet}
                       isLosers={false} grandFinalId={null}
@@ -2270,7 +2360,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                       onScore={(id, who, d) => setPlateMatchMap(prev => applyScoreChange(prev, id, who, d))}
                       useScoring={useScoring} scale={scale}
                       editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.plate}
-                      color={ORANGE} gutter={gutterWidth}
+                      gutter={gutterWidth}
                     />
                     {plateChampion && (
                       <div style={{ marginLeft: 20, padding: 16, background: `${ORANGE}14`, border: `1px solid ${ORANGE}55`, borderRadius: 12, textAlign: "center", minWidth: 160, flexShrink: 0 }}>
