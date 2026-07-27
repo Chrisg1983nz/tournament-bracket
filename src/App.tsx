@@ -593,29 +593,29 @@ function slotLabel(matchMap, matchId, slot) {
 }
 
 // --- Bracket layout math -------------------------------------------------------
-// Computes, for a sequence of rounds, the vertical gap between cards in each
-// round and the top offset (padding) before the first card - so that when a
-// round is "active" (expanded) its neighbours collapse tightly, while a round
-// feeding INTO the active round (or fed BY it) still lines up each card at
-// the midpoint of the pair of cards that produced it, exactly like a real
-// bracket. See derivation: for round i fed by round i-1 (2:1), centering
-// requires gap_i = cardHeight + 2*gap_(i-1), offset_i = (cardHeight+gap_(i-1))/2.
-const BRACKET_TIGHT_ACTIVE_GAP = 14;
-const BRACKET_TIGHT_COLLAPSE_GAP = 6;
+// A round pill is a focus control, not a different bracket.  The focused
+// column gets breathing room; every other column collapses into a compact
+// rail.  Keeping each column independent is deliberate: the old recursive
+// calculation only worked when Round 1 was selected.  Selecting a later
+// round made every column to its right progressively *larger*, which is the
+// opposite of the FIFA-style collapse interaction.
+const BRACKET_FOCUSED_GAP = 16;
+const BRACKET_COLLAPSED_GAP = 5;
 // Height of the round title label (font-size 11 + marginBottom 12) above each
 // RoundCol's card list - connector gutters need this same top offset so their
 // lines land on the card-list baseline, not the title baseline.
 const BRACKET_TITLE_BLOCK_HEIGHT = 26;
 
 function computeRoundLayout(numRounds, activeIndex, cardHeight) {
-  const gaps = [];
-  const offsets = [];
-  for (let i = 0; i < numRounds; i++) {
-    if (i === activeIndex) gaps[i] = BRACKET_TIGHT_ACTIVE_GAP;
-    else if (i === 0) gaps[i] = BRACKET_TIGHT_COLLAPSE_GAP;
-    else gaps[i] = cardHeight + 2 * gaps[i - 1];
-    offsets[i] = i === 0 ? 0 : (cardHeight + gaps[i - 1]) / 2;
-  }
+  const hasFocus = activeIndex >= 0 && activeIndex < numRounds;
+  const gaps = Array.from({ length: numRounds }, (_, i) =>
+    hasFocus && i === activeIndex ? BRACKET_FOCUSED_GAP : BRACKET_COLLAPSED_GAP
+  );
+
+  // All columns share a top edge while focused.  Connector positions are
+  // derived from these same values, so their elbows move with the cards
+  // instead of being left behind when a pill is pressed.
+  const offsets = Array.from({ length: numRounds }, () => 0);
   return { gaps, offsets };
 }
 
