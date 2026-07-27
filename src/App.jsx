@@ -561,7 +561,7 @@ function slotLabel(matchMap, matchId, slot) {
 // is what caused the long stray-looking lines.
 const BRACKET_GAP = 14;
 
-function BracketNode({ matchId, matchMap, inScopeSet, isLosers, grandFinalId, onPickWinner, onChangeWinner, onScore, useScoring, scale, editingMatchId, setEditingMatchId, readOnly, gutter }) {
+function BracketNode({ matchId, matchMap, inScopeSet, isLosers, grandFinalId, onPickWinner, onChangeWinner, onScore, useScoring, scale, editingMatchId, setEditingMatchId, readOnly, gutter, reserveTarget, spacerHeight }) {
   const m = matchMap[matchId];
   if (!m) return null;
 
@@ -581,20 +581,65 @@ function BracketNode({ matchId, matchMap, inScopeSet, isLosers, grandFinalId, on
     </div>
   );
 
-  if (childCount === 0) return cardEl;
+  // How many feeder "slots" this match should reserve width for. Normally
+  // that's just however many real feeders it actually has (childCount).
+  // But if a prelim/bye round means some matches in the SAME round have an
+  // extra generation nested to their left and others don't (e.g. one WB
+  // Round-1 match receives a prelim winner, its siblings don't), the
+  // organically-narrower matches get positioned further left than their
+  // siblings, which throws every later round out of column alignment too.
+  // `reserveTarget` (computed once per round in BracketScreen) tells us
+  // the max feeder count actually present anywhere in this match's round,
+  // so we can pad the deficit with an invisible spacer of equal size.
+  const target = (reserveTarget && reserveTarget.has(matchId)) ? reserveTarget.get(matchId) : childCount;
 
-  const childProps = { matchMap, inScopeSet, isLosers, grandFinalId, onPickWinner, onChangeWinner, onScore, useScoring, scale, editingMatchId, setEditingMatchId, readOnly, gutter };
+  if (childCount === 0 && target === 0) return cardEl;
+
+  const childProps = { matchMap, inScopeSet, isLosers, grandFinalId, onPickWinner, onChangeWinner, onScore, useScoring, scale, editingMatchId, setEditingMatchId, readOnly, gutter, reserveTarget, spacerHeight };
+
+  let deficit = Math.max(0, target - childCount);
+  const spacerStyle = { width: scale.cardWidth, minWidth: scale.cardWidth, height: spacerHeight || undefined, flexShrink: 0 };
+  const p1Slot = p1In ? <BracketNode matchId={m.p1FromMatchId} {...childProps} />
+    : (deficit > 0 ? (deficit--, <div style={spacerStyle} />) : null);
+  const p2Slot = p2In ? <BracketNode matchId={m.p2FromMatchId} {...childProps} />
+    : (deficit > 0 ? (deficit--, <div style={spacerStyle} />) : null);
 
   return (
     <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
       <div style={{ display: "flex", flexDirection: "column", gap: BRACKET_GAP }}>
-        {p1In && <BracketNode matchId={m.p1FromMatchId} {...childProps} />}
-        {p2In && <BracketNode matchId={m.p2FromMatchId} {...childProps} />}
+        {p1Slot}
+        {p2Slot}
       </div>
       <div style={{ width: gutter, flexShrink: 0 }} />
       {cardEl}
     </div>
   );
+}
+
+// Computes, for a set of rounds (e.g. allWbRounds or losersRounds), how
+// many feeder slots each match should reserve - the max feeder count seen
+// anywhere else in that SAME round. Only returns entries for matches that
+// actually need padding (i.e. the round is "mixed" - some matches have
+// more in-scope feeders than others), so normal symmetric rounds are
+// untouched.
+function computeReserveTargets(rounds, matchMap, inScopeSet) {
+  const target = new Map();
+  rounds.forEach((roundIds) => {
+    if (!roundIds || roundIds.length < 2) return;
+    const counts = roundIds.map((id) => {
+      const m = matchMap[id];
+      if (!m) return 0;
+      const p1In = m.p1FromMatchId != null && inScopeSet.has(m.p1FromMatchId);
+      const p2In = m.p2FromMatchId != null && inScopeSet.has(m.p2FromMatchId);
+      return (p1In ? 1 : 0) + (p2In ? 1 : 0);
+    });
+    const maxCount = Math.max(...counts);
+    if (maxCount === 0) return;
+    roundIds.forEach((id, i) => {
+      if (counts[i] < maxCount) target.set(id, maxCount);
+    });
+  });
+  return target;
 }
 
 // Measures the REAL rendered position of every in-scope match card (after
@@ -2218,6 +2263,26 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
   const lbInScopeSet = new Set(losersRounds.flat());
   const lbTreeRootId = losersRounds.length > 0 ? losersRounds[losersRounds.length - 1][0] : null;
 
+  // If a prelim/bye round means some matches in a round have an extra
+  // generation nested to their left and sibling matches in that same round
+  // don't (e.g. only one WB Round-1 match receives a prelim winner), the
+  // narrower matches render further left than their siblings, throwing
+  // every later round's column alignment off too - not just that one
+  // round. computeReserveTargets detects any such "mixed" rounds and
+  // BracketNode pads the deficit with an invisible same-size spacer.
+  const wbReserveTargets = useMemo(
+    () => computeReserveTargets(allWbRounds, matchMap, wbInScopeSet),
+    [allWbRounds, matchMap, wbInScopeSet]
+  );
+  const lbReserveTargets = useMemo(
+    () => computeReserveTargets(losersRounds, matchMap, lbInScopeSet),
+    [losersRounds, matchMap, lbInScopeSet]
+  );
+  const plateReserveTargets = useMemo(
+    () => computeReserveTargets(plateRoundsArr, plateData ? plateData.matchMap : {}, plateInScopeSet),
+    [plateRoundsArr, plateData, plateInScopeSet]
+  );
+
   // Scrolls so that a specific match card is flush with the container's
   // left edge. We measure the card's actual DOM position rather than
   // computing it from a formula, because WB/Losers/Plate are laid out
@@ -2397,7 +2462,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                 onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
                 useScoring={useScoring} scale={scale}
                 editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.wb}
-                gutter={gutterWidth}
+                gutter={gutterWidth} reserveTarget={wbReserveTargets} spacerHeight={cardHeight}
               />
               {champion && (
                 <div style={{ marginLeft: 20, padding: 16, background: `${GOLD}14`, border: `1px solid ${GOLD}55`, borderRadius: 12, textAlign: "center", minWidth: 160, flexShrink: 0 }}>
@@ -2425,7 +2490,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                     onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
                     useScoring={useScoring} scale={scale}
                     editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.lb}
-                    gutter={gutterWidth}
+                    gutter={gutterWidth} reserveTarget={lbReserveTargets} spacerHeight={cardHeight}
                   />
                 </div>
               </div>
@@ -2453,7 +2518,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                       onScore={(id, who, d) => setPlateMatchMap(prev => applyScoreChange(prev, id, who, d))}
                       useScoring={useScoring} scale={scale}
                       editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.plate}
-                      gutter={gutterWidth}
+                      gutter={gutterWidth} reserveTarget={plateReserveTargets} spacerHeight={cardHeight}
                     />
                     {plateChampion && (
                       <div style={{ marginLeft: 20, padding: 16, background: `${ORANGE}14`, border: `1px solid ${ORANGE}55`, borderRadius: 12, textAlign: "center", minWidth: 160, flexShrink: 0 }}>
