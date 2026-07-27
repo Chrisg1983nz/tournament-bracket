@@ -561,7 +561,7 @@ function slotLabel(matchMap, matchId, slot) {
 // is what caused the long stray-looking lines.
 const BRACKET_GAP = 14;
 
-function BracketNode({ matchId, matchMap, inScopeSet, isLosers, grandFinalId, onPickWinner, onChangeWinner, onScore, useScoring, scale, editingMatchId, setEditingMatchId, readOnly, gutter }) {
+function BracketNode({ matchId, matchMap, inScopeSet, isLosers, grandFinalId, onPickWinner, onChangeWinner, onScore, useScoring, scale, editingMatchId, setEditingMatchId, readOnly, gutter, reserveTarget, spacerHeight }) {
   const m = matchMap[matchId];
   if (!m) return null;
 
@@ -571,7 +571,7 @@ function BracketNode({ matchId, matchMap, inScopeSet, isLosers, grandFinalId, on
   const isGF = grandFinalId != null && matchId === grandFinalId;
 
   const cardEl = (
-    <div data-bracket-card="true" data-match-id={matchId}>
+    <div data-bracket-card="true" data-match-id={matchId} style={{ scrollMarginLeft: 16 }}>
       <MatchCard
         matchId={matchId} matchMap={matchMap}
         onPickWinner={onPickWinner} onChangeWinner={onChangeWinner} onScore={onScore}
@@ -581,20 +581,65 @@ function BracketNode({ matchId, matchMap, inScopeSet, isLosers, grandFinalId, on
     </div>
   );
 
-  if (childCount === 0) return cardEl;
+  // How many feeder "slots" this match should reserve width for. Normally
+  // that's just however many real feeders it actually has (childCount).
+  // But if a prelim/bye round means some matches in the SAME round have an
+  // extra generation nested to their left and others don't (e.g. one WB
+  // Round-1 match receives a prelim winner, its siblings don't), the
+  // organically-narrower matches get positioned further left than their
+  // siblings, which throws every later round out of column alignment too.
+  // `reserveTarget` (computed once per round in BracketScreen) tells us
+  // the max feeder count actually present anywhere in this match's round,
+  // so we can pad the deficit with an invisible spacer of equal size.
+  const target = (reserveTarget && reserveTarget.has(matchId)) ? reserveTarget.get(matchId) : childCount;
 
-  const childProps = { matchMap, inScopeSet, isLosers, grandFinalId, onPickWinner, onChangeWinner, onScore, useScoring, scale, editingMatchId, setEditingMatchId, readOnly, gutter };
+  if (childCount === 0 && target === 0) return cardEl;
+
+  const childProps = { matchMap, inScopeSet, isLosers, grandFinalId, onPickWinner, onChangeWinner, onScore, useScoring, scale, editingMatchId, setEditingMatchId, readOnly, gutter, reserveTarget, spacerHeight };
+
+  let deficit = Math.max(0, target - childCount);
+  const spacerStyle = { width: scale.cardWidth, minWidth: scale.cardWidth, height: spacerHeight || undefined, flexShrink: 0 };
+  const p1Slot = p1In ? <BracketNode matchId={m.p1FromMatchId} {...childProps} />
+    : (deficit > 0 ? (deficit--, <div style={spacerStyle} />) : null);
+  const p2Slot = p2In ? <BracketNode matchId={m.p2FromMatchId} {...childProps} />
+    : (deficit > 0 ? (deficit--, <div style={spacerStyle} />) : null);
 
   return (
     <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
       <div style={{ display: "flex", flexDirection: "column", gap: BRACKET_GAP }}>
-        {p1In && <BracketNode matchId={m.p1FromMatchId} {...childProps} />}
-        {p2In && <BracketNode matchId={m.p2FromMatchId} {...childProps} />}
+        {p1Slot}
+        {p2Slot}
       </div>
       <div style={{ width: gutter, flexShrink: 0 }} />
       {cardEl}
     </div>
   );
+}
+
+// Computes, for a set of rounds (e.g. allWbRounds or losersRounds), how
+// many feeder slots each match should reserve - the max feeder count seen
+// anywhere else in that SAME round. Only returns entries for matches that
+// actually need padding (i.e. the round is "mixed" - some matches have
+// more in-scope feeders than others), so normal symmetric rounds are
+// untouched.
+function computeReserveTargets(rounds, matchMap, inScopeSet) {
+  const target = new Map();
+  rounds.forEach((roundIds) => {
+    if (!roundIds || roundIds.length < 2) return;
+    const counts = roundIds.map((id) => {
+      const m = matchMap[id];
+      if (!m) return 0;
+      const p1In = m.p1FromMatchId != null && inScopeSet.has(m.p1FromMatchId);
+      const p2In = m.p2FromMatchId != null && inScopeSet.has(m.p2FromMatchId);
+      return (p1In ? 1 : 0) + (p2In ? 1 : 0);
+    });
+    const maxCount = Math.max(...counts);
+    if (maxCount === 0) return;
+    roundIds.forEach((id, i) => {
+      if (counts[i] < maxCount) target.set(id, maxCount);
+    });
+  });
+  return target;
 }
 
 // Measures the REAL rendered position of every in-scope match card (after
@@ -615,18 +660,45 @@ function BracketConnectorsOverlay({ containerRef, contentRef, matchMap, matchIds
 
     const measure = () => {
       const contentRect = content.getBoundingClientRect();
-      const scrollLeft = container.scrollLeft;
-      const scrollTop = container.scrollTop;
       const pos = {};
       matchIds.forEach((id) => {
         const el = content.querySelector(`[data-match-id="${id}"]`);
         if (!el) return;
         const r = el.getBoundingClientRect();
+        // `content` is itself inside the scrolling container - it and its
+        // descendant cards move together as one rigid unit when you
+        // scroll, so a card's offset from content's own top-left corner
+        // (r.left - contentRect.left) is ALREADY invariant to scroll: both
+        // values shift by the same amount and the difference cancels out.
+        // (Earlier versions of this also added `container.scrollLeft` on
+        // top, which double-counted the scroll offset - correct only at
+        // scrollLeft 0, and increasingly wrong by exactly the scrolled
+        // distance every time it was re-measured after scrolling. That's
+        // what caused the lines to drift off to wherever you'd scrolled.)
         pos[id] = {
-          top: r.top - contentRect.top + scrollTop,
-          left: r.left - contentRect.left + scrollLeft,
-          right: r.right - contentRect.left + scrollLeft,
-          centerY: r.top - contentRect.top + scrollTop + r.height / 2,
+          top: r.top - contentRect.top,
+          left: r.left - contentRect.left,
+          right: r.right - contentRect.left,
+          centerY: (() => {
+            // Connector lines should meet exactly at the divider border
+            // between the two player rows, not the geometric center of
+            // the whole card (the header above the rows would throw that
+            // off) and not an average of the two rows' heights either
+            // (which silently assumes they render identically tall).
+            // Measuring the first row's own bottom edge directly gives
+            // the divider's real screen position with no assumptions.
+            const firstRow = el.querySelector('[data-first-row="true"]');
+            if (firstRow) {
+              const fr = firstRow.getBoundingClientRect();
+              return fr.bottom - contentRect.top;
+            }
+            const rows = el.querySelector('[data-player-rows="true"]');
+            if (rows) {
+              const rr = rows.getBoundingClientRect();
+              return rr.top - contentRect.top + rr.height / 2;
+            }
+            return r.top - contentRect.top + r.height / 2;
+          })(),
         };
       });
 
@@ -651,10 +723,43 @@ function BracketConnectorsOverlay({ containerRef, contentRef, matchMap, matchIds
       setSize({ w: content.scrollWidth, h: content.scrollHeight });
     };
 
+    // Positions are computed in content-local coordinates (scroll offset is
+    // added back in), so they stay correct across scroll - but only if we
+    // re-measure after a scroll happens. Pill navigation triggers a smooth
+    // `scrollTo`, which fires neither ResizeObserver (nothing resizes) nor
+    // a React re-render, so without a scroll listener the overlay's
+    // `lines`/`size` state is left holding a stale snapshot from before
+    // the animation ran.
+    //
+    // IMPORTANT: don't re-measure on every scroll/animation frame. Each
+    // measure() call reads getBoundingClientRect() for every match card,
+    // which forces a synchronous layout. Doing that dozens of times a
+    // second *while* a smooth-scroll animation is running causes iOS
+    // Safari/WKWebView to drop repaint tiles for the (expensive, DOM-tree)
+    // match cards while the (cheap, GPU-composited) SVG lines keep
+    // drawing fine - which is exactly the "lines are there but cards are
+    // blank" glitch. Instead, debounce: only measure once scrolling has
+    // actually stopped.
+    let debounceId = null;
+    const scheduleMeasure = () => {
+      if (debounceId != null) clearTimeout(debounceId);
+      debounceId = setTimeout(() => {
+        debounceId = null;
+        measure();
+      }, 120);
+    };
+
     measure();
-    const ro = new ResizeObserver(measure);
+    const ro = new ResizeObserver(scheduleMeasure);
     ro.observe(content);
-    return () => ro.disconnect();
+    container.addEventListener("scroll", scheduleMeasure, { passive: true });
+    window.addEventListener("resize", scheduleMeasure);
+    return () => {
+      ro.disconnect();
+      container.removeEventListener("scroll", scheduleMeasure);
+      window.removeEventListener("resize", scheduleMeasure);
+      if (debounceId != null) clearTimeout(debounceId);
+    };
   }, [containerRef, contentRef, matchMap, matchIds]);
 
   if (!size.w || !size.h) return null;
@@ -1002,6 +1107,7 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
         )}
       </div>
 
+      <div data-player-rows="true">
       {players.map(({ player, slot }, i) => {
         const fromLabel = !player ? slotLabel(matchMap, matchId, slot) : null;
         const isWinner  = settled && m.winner === player;
@@ -1011,6 +1117,7 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
         return (
           <div
             key={slot}
+            data-first-row={i === 0 ? "true" : undefined}
             onClick={() => {
               if (!canTap) return;
               if (settled && editing) { onChangeWinner(matchId, player); setEditing(false); }
@@ -1071,6 +1178,7 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
           </div>
         );
       })}
+      </div>
     </div>
   );
 }
@@ -2155,24 +2263,72 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
   const lbInScopeSet = new Set(losersRounds.flat());
   const lbTreeRootId = losersRounds.length > 0 ? losersRounds[losersRounds.length - 1][0] : null;
 
-  // Horizontal position of round index i (from Round 1) is always exactly
-  // i * (cardWidth + gutter) regardless of collapse state, since only the
-  // vertical gap changes, never the card width - so pill navigation can
-  // just scroll to a computed offset instead of needing to look up a DOM
-  // element for a specific round column.
-  const scrollToRoundIndex = (i) => {
+  // If a prelim/bye round means some matches in a round have an extra
+  // generation nested to their left and sibling matches in that same round
+  // don't (e.g. only one WB Round-1 match receives a prelim winner), the
+  // narrower matches render further left than their siblings, throwing
+  // every later round's column alignment off too - not just that one
+  // round. computeReserveTargets detects any such "mixed" rounds and
+  // BracketNode pads the deficit with an invisible same-size spacer.
+  const wbReserveTargets = useMemo(
+    () => computeReserveTargets(allWbRounds, matchMap, wbInScopeSet),
+    [allWbRounds, matchMap, wbInScopeSet]
+  );
+  const lbReserveTargets = useMemo(
+    () => computeReserveTargets(losersRounds, matchMap, lbInScopeSet),
+    [losersRounds, matchMap, lbInScopeSet]
+  );
+  const plateReserveTargets = useMemo(
+    () => computeReserveTargets(plateRoundsArr, plateData ? plateData.matchMap : {}, plateInScopeSet),
+    [plateRoundsArr, plateData, plateInScopeSet]
+  );
+
+  // Scrolls so that a specific match card is flush with the container's
+  // left edge. We measure the card's actual DOM position rather than
+  // computing it from a formula, because WB/Losers/Plate are laid out
+  // side-by-side in one continuous scrollable row - a Losers or Plate
+  // round isn't at a fixed i*(cardWidth+gutter) offset from the left edge,
+  // it's offset by the full width of every section that comes before it.
+  // (Unlike the connector-line measurement, here we DO want the absolute
+  // position within the full scrollable range, so we DO add back
+  // container.scrollLeft - container itself is the fixed viewport frame,
+  // not a scrolling descendant, so this is the correct case for it.)
+  const scrollToMatchId = (matchId) => {
     const container = bracketScrollRef.current;
-    if (!container) return;
-    const target = i * (cardWidth + gutterWidth) - 16;
-    container.scrollTo({ left: Math.max(0, target), top: 0, behavior: "smooth" });
-    window.scrollTo({ top: container.getBoundingClientRect().top + window.scrollY - 100, behavior: "smooth" });
+    if (!container || !matchId) return;
+    const el = container.querySelector(`[data-match-id="${matchId}"]`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
+
+    // iOS WKWebView sometimes fails to paint tiles that scroll into view
+    // via a JS-triggered scroll (as opposed to a real touch gesture) - the
+    // compositor doesn't always realize new content needs rendering.
+    // Nudging a harmless style change forces a fresh paint. We do this
+    // both right away and again after the smooth-scroll animation would
+    // have finished, to catch content that scrolls in partway through.
+    const nudgeRepaint = () => {
+      if (!container) return;
+      container.style.opacity = "0.999";
+      requestAnimationFrame(() => {
+        if (container) container.style.opacity = "1";
+      });
+    };
+    requestAnimationFrame(nudgeRepaint);
+    setTimeout(nudgeRepaint, 400);
+  };
+
+  const firstIdsForSection = (key) => {
+    if (key === "wb") return allWbRounds[0] || [];
+    if (key === "lb") return losersRounds[0] || [];
+    if (key === "plate") return plateRoundsArr[0] || [];
+    return [];
   };
 
   const roundTabs = [
-    ...allWbRounds.map((_, i) => ({ key: `wb-${i}`, index: i, label: wbLabel(i, allWbRounds.length), color: PURPLE, section: "wb" })),
-    ...(wbHasGF ? [{ key: "gf", index: allWbRounds.length, label: "Grand Final", color: GOLD, section: "gf" }] : []),
-    ...(!isSingleElim && losersRounds.length > 0 ? losersRounds.map((_, i) => ({ key: `lb-${i}`, index: i, label: lbLabel(i), color: BLUE, section: "lb" })) : []),
-    ...(plateData ? plateRoundsArr.map((_, i) => ({ key: `plate-${i}`, index: i, label: plateLabel(i, plateRoundsArr), color: "#FB923C", section: "plate" })) : []),
+    ...allWbRounds.map((ids, i) => ({ key: `wb-${i}`, ids, label: wbLabel(i, allWbRounds.length), color: PURPLE, section: "wb" })),
+    ...(wbHasGF ? [{ key: "gf", ids: [grandFinalId], label: "Grand Final", color: GOLD, section: "gf" }] : []),
+    ...(!isSingleElim && losersRounds.length > 0 ? losersRounds.map((ids, i) => ({ key: `lb-${i}`, ids, label: lbLabel(i), color: BLUE, section: "lb" })) : []),
+    ...(plateData ? plateRoundsArr.map((ids, i) => ({ key: `plate-${i}`, ids, label: plateLabel(i, plateRoundsArr), color: "#FB923C", section: "plate" })) : []),
   ];
 
   return (
@@ -2217,8 +2373,10 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
             const isActive = activeSection === key;
             return (
               <button key={key} onClick={() => {
-                setActiveTab(key === "lb" ? "lb-0" : key === "plate" ? "plate-0" : "wb-0");
-                setTimeout(() => scrollToRoundIndex(0), 30);
+                const newTab = key === "lb" ? "lb-0" : key === "plate" ? "plate-0" : "wb-0";
+                setActiveTab(newTab);
+                const ids = firstIdsForSection(key);
+                setTimeout(() => scrollToMatchId(ids[0]), 30);
               }} style={{
                 padding: "8px 18px",
                 background: isActive ? color : CARD,
@@ -2234,12 +2392,12 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
         </div>
 
         <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
-          {roundTabs.filter(t => t.section === activeSection || (activeSection === "wb" && t.section === "gf")).map(({ key, index, label, color }) => {
+          {roundTabs.filter(t => t.section === activeSection || (activeSection === "wb" && t.section === "gf")).map(({ key, ids, label, color }) => {
             const isActive = activeTab === key;
             return (
               <button key={key} onClick={() => {
                 setActiveTab(key);
-                setTimeout(() => scrollToRoundIndex(index), 30);
+                setTimeout(() => scrollToMatchId(ids[0]), 30);
               }} style={{
                 flex: "0 0 auto", padding: "6px 14px",
                 background: isActive ? TEXT : "transparent",
@@ -2286,7 +2444,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
         </div>
       )}
 
-      <div ref={bracketScrollRef} style={{ overflowX: "auto", overflowY: "auto", padding: "24px 0 140px", WebkitOverflowScrolling: "touch" }}>
+      <div ref={bracketScrollRef} style={{ overflowX: "auto", overflowY: "auto", padding: "24px 0 140px", transform: "translateZ(0)", WebkitTransform: "translateZ(0)", WebkitBackfaceVisibility: "hidden" }}>
         <div style={{ display: "inline-flex", gap: 0, alignItems: "flex-start", padding: "0 16px", minWidth: "max-content" }}>
 
           {/* Winners bracket (+ Grand Final folded in as the tree's root when enabled) */}
@@ -2304,7 +2462,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                 onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
                 useScoring={useScoring} scale={scale}
                 editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.wb}
-                gutter={gutterWidth}
+                gutter={gutterWidth} reserveTarget={wbReserveTargets} spacerHeight={cardHeight}
               />
               {champion && (
                 <div style={{ marginLeft: 20, padding: 16, background: `${GOLD}14`, border: `1px solid ${GOLD}55`, borderRadius: 12, textAlign: "center", minWidth: 160, flexShrink: 0 }}>
@@ -2332,7 +2490,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                     onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
                     useScoring={useScoring} scale={scale}
                     editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.lb}
-                    gutter={gutterWidth}
+                    gutter={gutterWidth} reserveTarget={lbReserveTargets} spacerHeight={cardHeight}
                   />
                 </div>
               </div>
@@ -2360,7 +2518,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                       onScore={(id, who, d) => setPlateMatchMap(prev => applyScoreChange(prev, id, who, d))}
                       useScoring={useScoring} scale={scale}
                       editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.plate}
-                      gutter={gutterWidth}
+                      gutter={gutterWidth} reserveTarget={plateReserveTargets} spacerHeight={cardHeight}
                     />
                     {plateChampion && (
                       <div style={{ marginLeft: 20, padding: 16, background: `${ORANGE}14`, border: `1px solid ${ORANGE}55`, borderRadius: 12, textAlign: "center", minWidth: 160, flexShrink: 0 }}>
@@ -2402,12 +2560,12 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
       {activeSection === "lb" && grandFinalEnabled && lbComplete && !showCloseOut && (
         <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: `linear-gradient(to top, ${BG} 70%, ${BG}00)`, padding: "20px 16px 16px", display: "flex", gap: 10 }}>
           {!wbSettled && (
-            <button onClick={() => setActiveTab("wb-0")}
+            <button onClick={() => { setActiveTab("wb-0"); setTimeout(() => scrollToMatchId((allWbRounds[0] || [])[0]), 30); }}
               style={{ flex: 1, padding: "16px", background: `${GOLD}18`, border: `1px solid ${GOLD}`, borderRadius: 14, color: GOLD, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
               {wbInProgress ? "Continue to Winners Bracket" : "Go to Winners Bracket"}
             </button>
           )}
-          <button onClick={() => setActiveTab("gf")}
+          <button onClick={() => { setActiveTab("gf"); setTimeout(() => scrollToMatchId(grandFinalId), 30); }}
             style={{ flex: 1, padding: "16px", background: GOLD, border: "none", borderRadius: 14, color: "#0D0F14", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
             Go to Grand Final
           </button>
@@ -2447,19 +2605,19 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
               ) : (
                 <>
                   {!lbSettled && activeSection !== "lb" && (
-                    <button onClick={() => { setShowCloseOut(false); setActiveTab("lb-0"); }}
+                    <button onClick={() => { setShowCloseOut(false); setActiveTab("lb-0"); setTimeout(() => scrollToMatchId((losersRounds[0] || [])[0]), 30); }}
                       style={{ width: "100%", padding: "14px", background: `${BLUE}18`, border: `1px solid ${BLUE}`, borderRadius: 12, color: BLUE, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                       {lbInProgress ? "Continue to Losers Bracket" : "Close Out Losers Bracket"}
                     </button>
                   )}
                   {!plateSettled && activeSection !== "plate" && (
-                    <button onClick={() => { setShowCloseOut(false); setActiveTab("plate-0"); }}
+                    <button onClick={() => { setShowCloseOut(false); setActiveTab("plate-0"); setTimeout(() => scrollToMatchId((plateRoundsArr[0] || [])[0]), 30); }}
                       style={{ width: "100%", padding: "14px", background: `${ORANGE}18`, border: `1px solid ${ORANGE}`, borderRadius: 12, color: ORANGE, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                       {plateInProgress ? "Continue to Plate" : "Close Out Plate"}
                     </button>
                   )}
                   {!wbSettled && activeSection !== "wb" && activeSection !== "gf" && (
-                    <button onClick={() => { setShowCloseOut(false); setActiveTab("wb-0"); }}
+                    <button onClick={() => { setShowCloseOut(false); setActiveTab("wb-0"); setTimeout(() => scrollToMatchId((allWbRounds[0] || [])[0]), 30); }}
                       style={{ width: "100%", padding: "14px", background: `${GOLD}18`, border: `1px solid ${GOLD}`, borderRadius: 12, color: GOLD, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                       {wbInProgress ? "Continue to Main Bracket" : "Close Out Main Tournament"}
                     </button>
