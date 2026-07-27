@@ -604,20 +604,36 @@ const BRACKET_BASE_GAP = 14;
 // lines land on the card-list baseline, not the title baseline.
 const BRACKET_TITLE_BLOCK_HEIGHT = 26;
 
-function computeRoundLayout(numRounds, activeIndex, cardHeight) {
-  const focus = activeIndex >= 0 && activeIndex < numRounds ? activeIndex : 0;
+// A clean knockout tree halves every round, but a Winners prelim can grow
+// (1 -> 8), a Losers round can merge new drop-ins (4 -> 4), and a Plate can
+// start with a bye.  FIFA's pitch-doubling rule still applies whenever a
+// round genuinely halves; otherwise, retain the previous pitch.
+function computeTopologyLayout(rounds, activeIndex, cardHeight) {
+  const focus = activeIndex >= 0 && activeIndex < rounds.length ? activeIndex : 0;
   const basePitch = cardHeight + BRACKET_BASE_GAP;
   const gaps = [];
   const offsets = [];
+  let previousPitch = basePitch;
 
-  for (let i = 0; i < numRounds; i++) {
-    // At and before the chosen round, cards use the compact base pitch.
-    // Each later round expands from that pitch, preserving true bracket
-    // midpoints and keeping connector elbows aligned with their targets.
-    const stepsAfterFocus = Math.max(0, i - focus);
-    const pitch = basePitch * Math.pow(2, stepsAfterFocus);
+  for (let i = 0; i < rounds.length; i++) {
+    if (i <= focus) {
+      gaps[i] = BRACKET_BASE_GAP;
+      offsets[i] = 0;
+      previousPitch = basePitch;
+      continue;
+    }
+
+    const previousCount = Math.max(1, rounds[i - 1].length);
+    const currentCount = Math.max(1, rounds[i].length);
+    // Grow only when this round genuinely eliminates matches.  The cap keeps
+    // a prelim/bye from producing an exaggerated jump.
+    const ratio = currentCount < previousCount
+      ? Math.min(2, previousCount / currentCount)
+      : 1;
+    const pitch = previousPitch * ratio;
     gaps[i] = Math.max(BRACKET_BASE_GAP, pitch - cardHeight);
-    offsets[i] = stepsAfterFocus === 0 ? 0 : (pitch - basePitch) / 2;
+    offsets[i] = offsets[i - 1] + (pitch - previousPitch) / 2;
+    previousPitch = pitch;
   }
   return { gaps, offsets };
 }
@@ -2203,7 +2219,11 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
   // (matching the WB final's own offset exactly, not the pair-midpoint math).
   const gutterWidth = scale.tier === "desktop" ? 40 : 28;
   const wbActiveIndex = activeSection === "wb" ? parseInt(activeTab.split("-")[1], 10) : -1;
-  const wbLayout = computeRoundLayout(allWbRounds.length, wbActiveIndex, cardHeight);
+  // A prelim round can make the sequence 1 -> 8 -> 4 -> 2 -> 1 (for
+  // example, a 15-player tournament), rather than a simple binary tree.
+  // Use the same count-aware layout as LB/Plate so the prelim is an entry
+  // feed, not a spacing multiplier for every Winners round that follows.
+  const wbLayout = computeTopologyLayout(allWbRounds, wbActiveIndex, cardHeight);
   // GF's card must line up with the WB final (single match, 1:1), so it
   // simply inherits the WB final round's own top offset.
   const gfOffset = wbLayout.offsets[allWbRounds.length - 1] || 0;
@@ -2211,14 +2231,14 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
   // Plate round-by-round layout (independent bracket, own active state)
   const plateRoundsArr = plateData ? (plateData.rounds || []) : [];
   const plateActiveIndex = activeSection === "plate" ? parseInt(activeTab.split("-")[1], 10) : -1;
-  const plateLayout = computeRoundLayout(plateRoundsArr.length, plateActiveIndex, cardHeight);
+  const plateLayout = computeTopologyLayout(plateRoundsArr, plateActiveIndex, cardHeight);
 
   // LB round-by-round layout (independent bracket, own active state). LB
   // round sizes don't always halve cleanly (some rounds merge in WB losers
   // without eliminating anyone), so connector lines only draw where the
   // ratio between adjacent rounds is a clean 2:1 or 1:1 - see BracketConnectors.
   const lbActiveIndex = activeSection === "lb" ? parseInt(activeTab.split("-")[1], 10) : -1;
-  const lbLayout = computeRoundLayout(losersRounds.length, lbActiveIndex, cardHeight);
+  const lbLayout = computeTopologyLayout(losersRounds, lbActiveIndex, cardHeight);
 
   // Pill nav: one button per WB round + GF + LB + Plate
   const roundTabs = [
