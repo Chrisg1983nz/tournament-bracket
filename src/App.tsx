@@ -944,9 +944,8 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
   const ready   = m.p1 && m.p2 && !m.winner && !m.isBye && m.p1 !== "BYE" && m.p2 !== "BYE";
   const settled = !!m.winner;
 
-  const headerLabel = isGrandFinal ? "GRAND FINAL"
-    : isLosers ? `LB - MATCH ${m.matchNum}`
-    : `MATCH ${m.matchNum}`;
+  const matchLabel = isGrandFinal ? "FINAL" : `M ${m.matchNum}`;
+  const labelRailWidth = s.tier === "desktop" ? 58 : 50;
 
   // editing state is lifted to parent so it survives tab switches
   const editing = editingMatchId === matchId;
@@ -966,42 +965,42 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
         fontFamily: FONT,
         boxShadow: isGrandFinal && settled ? `0 0 24px ${GOLD}44` : "none",
         overflow: "hidden",
+        position: "relative",
       }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
+      {/* FIFA-style match label rail: it no longer consumes vertical space,
+          so the visual/card centre is the centre of the two player rows. */}
       <div style={{
-        padding: "5px 10px",
-        fontSize: 11,
-        fontFamily: MONO,
-        color: accent,
-        letterSpacing: "0.1em",
-        fontWeight: 700,
-        background: `${accent}18`,
-        borderBottom: `1px solid ${BORDER}`,
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-      }}>
-        <span>{headerLabel}</span>
-        {ready && !useScoring && <span style={{ color: MUTED, fontSize: 11 }}>TAP TO PICK</span>}
-        {settled && !editing && !readOnly && (
-          <span
-            onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-            style={{ fontSize: 11, color: GREEN, cursor: "pointer", opacity: hovered ? 1 : 0.7 }}
-            title="Tap to change winner"
-          >{hovered ? "v EDIT" : "v"}</span>
-        )}
-        {settled && !editing && readOnly && (
-          <span style={{ fontSize: 11, color: GREEN }}>v</span>
-        )}
-        {settled && editing && (
-          <span
-            onClick={(e) => { e.stopPropagation(); setEditing(false); }}
-            style={{ fontSize: 11, color: MUTED, cursor: "pointer", fontWeight: 700 }}
-          >x CANCEL</span>
-        )}
-      </div>
+        position: "absolute", inset: "0 auto 0 0", width: labelRailWidth,
+        background: `${accent}18`, borderRight: `1px solid ${BORDER}`,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        color: accent, fontSize: s.tier === "desktop" ? 12 : 11,
+        fontFamily: MONO, letterSpacing: "0.08em", fontWeight: 700,
+        writingMode: "vertical-rl", transform: "rotate(180deg)",
+        pointerEvents: "none",
+      }}>{matchLabel}</div>
+
+      {(ready && !useScoring) && (
+        <div style={{ position: "absolute", top: 7, right: 9, zIndex: 1, color: MUTED, fontSize: 10, fontFamily: MONO, letterSpacing: "0.06em", pointerEvents: "none" }}>TAP</div>
+      )}
+      {settled && !editing && !readOnly && (
+        <span
+          onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+          style={{ position: "absolute", top: 7, right: 9, zIndex: 1, fontSize: 10, color: GREEN, cursor: "pointer", opacity: hovered ? 1 : 0.7, fontFamily: MONO }}
+          title="Tap to change winner"
+        >{hovered ? "EDIT" : "v"}</span>
+      )}
+      {settled && !editing && readOnly && (
+        <span style={{ position: "absolute", top: 7, right: 9, zIndex: 1, fontSize: 10, color: GREEN, fontFamily: MONO }}>v</span>
+      )}
+      {settled && editing && (
+        <span
+          onClick={(e) => { e.stopPropagation(); setEditing(false); }}
+          style={{ position: "absolute", top: 7, right: 9, zIndex: 1, fontSize: 10, color: MUTED, cursor: "pointer", fontWeight: 700, fontFamily: MONO }}
+        >CANCEL</span>
+      )}
 
       {players.map(({ player, slot }, i) => {
         const fromLabel = !player ? slotLabel(matchMap, matchId, slot) : null;
@@ -1019,6 +1018,7 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
             }}
             style={{
               padding: s.tier === "desktop" ? "12px 14px 11px" : s.tier === "tablet" ? "10px 12px 9px" : "9px 10px 8px",
+              paddingLeft: labelRailWidth + (s.tier === "desktop" ? 14 : s.tier === "tablet" ? 12 : 10),
               borderBottom: i === 0 ? `1px solid ${BORDER}` : "none",
               background: isWinner ? `${accent}22` : isLoserP ? "#ffffff08" : "transparent",
               cursor: canTap ? "pointer" : "default",
