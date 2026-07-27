@@ -571,7 +571,7 @@ function BracketNode({ matchId, matchMap, inScopeSet, isLosers, grandFinalId, on
   const isGF = grandFinalId != null && matchId === grandFinalId;
 
   const cardEl = (
-    <div data-bracket-card="true" data-match-id={matchId}>
+    <div data-bracket-card="true" data-match-id={matchId} style={{ scrollMarginLeft: 16 }}>
       <MatchCard
         matchId={matchId} matchMap={matchMap}
         onPickWinner={onPickWinner} onChangeWinner={onChangeWinner} onScore={onScore}
@@ -2196,21 +2196,26 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
   const lbInScopeSet = new Set(losersRounds.flat());
   const lbTreeRootId = losersRounds.length > 0 ? losersRounds[losersRounds.length - 1][0] : null;
 
-  // Horizontal position of round index i (from Round 1) is always exactly
-  // i * (cardWidth + gutter) regardless of collapse state, since only the
-  // vertical gap changes, never the card width - so pill navigation can
-  // just scroll to a computed offset instead of needing to look up a DOM
-  // element for a specific round column.
-  const scrollToRoundIndex = (i) => {
+  // Scrolls so that a specific match card is flush with the container's
+  // left edge. We measure the card's actual DOM position rather than
+  // computing it from a formula, because WB/Losers/Plate are laid out
+  // side-by-side in one continuous scrollable row - a Losers or Plate
+  // round isn't at a fixed i*(cardWidth+gutter) offset from the left edge,
+  // it's offset by the full width of every section that comes before it.
+  // (Unlike the connector-line measurement, here we DO want the absolute
+  // position within the full scrollable range, so we DO add back
+  // container.scrollLeft - container itself is the fixed viewport frame,
+  // not a scrolling descendant, so this is the correct case for it.)
+  const scrollToMatchId = (matchId) => {
     const container = bracketScrollRef.current;
-    if (!container) return;
-    const target = i * (cardWidth + gutterWidth) - 16;
-    container.scrollTo({ left: Math.max(0, target), top: 0, behavior: "smooth" });
-    window.scrollTo({ top: container.getBoundingClientRect().top + window.scrollY - 100, behavior: "auto" });
+    if (!container || !matchId) return;
+    const el = container.querySelector(`[data-match-id="${matchId}"]`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
 
     // iOS WKWebView sometimes fails to paint tiles that scroll into view
-    // via a JS-triggered scrollTo (as opposed to a real touch gesture) -
-    // the compositor doesn't always realize new content needs rendering.
+    // via a JS-triggered scroll (as opposed to a real touch gesture) - the
+    // compositor doesn't always realize new content needs rendering.
     // Nudging a harmless style change forces a fresh paint. We do this
     // both right away and again after the smooth-scroll animation would
     // have finished, to catch content that scrolls in partway through.
@@ -2225,11 +2230,18 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
     setTimeout(nudgeRepaint, 400);
   };
 
+  const firstIdsForSection = (key) => {
+    if (key === "wb") return allWbRounds[0] || [];
+    if (key === "lb") return losersRounds[0] || [];
+    if (key === "plate") return plateRoundsArr[0] || [];
+    return [];
+  };
+
   const roundTabs = [
-    ...allWbRounds.map((_, i) => ({ key: `wb-${i}`, index: i, label: wbLabel(i, allWbRounds.length), color: PURPLE, section: "wb" })),
-    ...(wbHasGF ? [{ key: "gf", index: allWbRounds.length, label: "Grand Final", color: GOLD, section: "gf" }] : []),
-    ...(!isSingleElim && losersRounds.length > 0 ? losersRounds.map((_, i) => ({ key: `lb-${i}`, index: i, label: lbLabel(i), color: BLUE, section: "lb" })) : []),
-    ...(plateData ? plateRoundsArr.map((_, i) => ({ key: `plate-${i}`, index: i, label: plateLabel(i, plateRoundsArr), color: "#FB923C", section: "plate" })) : []),
+    ...allWbRounds.map((ids, i) => ({ key: `wb-${i}`, ids, label: wbLabel(i, allWbRounds.length), color: PURPLE, section: "wb" })),
+    ...(wbHasGF ? [{ key: "gf", ids: [grandFinalId], label: "Grand Final", color: GOLD, section: "gf" }] : []),
+    ...(!isSingleElim && losersRounds.length > 0 ? losersRounds.map((ids, i) => ({ key: `lb-${i}`, ids, label: lbLabel(i), color: BLUE, section: "lb" })) : []),
+    ...(plateData ? plateRoundsArr.map((ids, i) => ({ key: `plate-${i}`, ids, label: plateLabel(i, plateRoundsArr), color: "#FB923C", section: "plate" })) : []),
   ];
 
   return (
@@ -2274,8 +2286,10 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
             const isActive = activeSection === key;
             return (
               <button key={key} onClick={() => {
-                setActiveTab(key === "lb" ? "lb-0" : key === "plate" ? "plate-0" : "wb-0");
-                setTimeout(() => scrollToRoundIndex(0), 30);
+                const newTab = key === "lb" ? "lb-0" : key === "plate" ? "plate-0" : "wb-0";
+                setActiveTab(newTab);
+                const ids = firstIdsForSection(key);
+                setTimeout(() => scrollToMatchId(ids[0]), 30);
               }} style={{
                 padding: "8px 18px",
                 background: isActive ? color : CARD,
@@ -2291,12 +2305,12 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
         </div>
 
         <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
-          {roundTabs.filter(t => t.section === activeSection || (activeSection === "wb" && t.section === "gf")).map(({ key, index, label, color }) => {
+          {roundTabs.filter(t => t.section === activeSection || (activeSection === "wb" && t.section === "gf")).map(({ key, ids, label, color }) => {
             const isActive = activeTab === key;
             return (
               <button key={key} onClick={() => {
                 setActiveTab(key);
-                setTimeout(() => scrollToRoundIndex(index), 30);
+                setTimeout(() => scrollToMatchId(ids[0]), 30);
               }} style={{
                 flex: "0 0 auto", padding: "6px 14px",
                 background: isActive ? TEXT : "transparent",
@@ -2459,12 +2473,12 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
       {activeSection === "lb" && grandFinalEnabled && lbComplete && !showCloseOut && (
         <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: `linear-gradient(to top, ${BG} 70%, ${BG}00)`, padding: "20px 16px 16px", display: "flex", gap: 10 }}>
           {!wbSettled && (
-            <button onClick={() => setActiveTab("wb-0")}
+            <button onClick={() => { setActiveTab("wb-0"); setTimeout(() => scrollToMatchId((allWbRounds[0] || [])[0]), 30); }}
               style={{ flex: 1, padding: "16px", background: `${GOLD}18`, border: `1px solid ${GOLD}`, borderRadius: 14, color: GOLD, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
               {wbInProgress ? "Continue to Winners Bracket" : "Go to Winners Bracket"}
             </button>
           )}
-          <button onClick={() => setActiveTab("gf")}
+          <button onClick={() => { setActiveTab("gf"); setTimeout(() => scrollToMatchId(grandFinalId), 30); }}
             style={{ flex: 1, padding: "16px", background: GOLD, border: "none", borderRadius: 14, color: "#0D0F14", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
             Go to Grand Final
           </button>
@@ -2504,19 +2518,19 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
               ) : (
                 <>
                   {!lbSettled && activeSection !== "lb" && (
-                    <button onClick={() => { setShowCloseOut(false); setActiveTab("lb-0"); }}
+                    <button onClick={() => { setShowCloseOut(false); setActiveTab("lb-0"); setTimeout(() => scrollToMatchId((losersRounds[0] || [])[0]), 30); }}
                       style={{ width: "100%", padding: "14px", background: `${BLUE}18`, border: `1px solid ${BLUE}`, borderRadius: 12, color: BLUE, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                       {lbInProgress ? "Continue to Losers Bracket" : "Close Out Losers Bracket"}
                     </button>
                   )}
                   {!plateSettled && activeSection !== "plate" && (
-                    <button onClick={() => { setShowCloseOut(false); setActiveTab("plate-0"); }}
+                    <button onClick={() => { setShowCloseOut(false); setActiveTab("plate-0"); setTimeout(() => scrollToMatchId((plateRoundsArr[0] || [])[0]), 30); }}
                       style={{ width: "100%", padding: "14px", background: `${ORANGE}18`, border: `1px solid ${ORANGE}`, borderRadius: 12, color: ORANGE, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                       {plateInProgress ? "Continue to Plate" : "Close Out Plate"}
                     </button>
                   )}
                   {!wbSettled && activeSection !== "wb" && activeSection !== "gf" && (
-                    <button onClick={() => { setShowCloseOut(false); setActiveTab("wb-0"); }}
+                    <button onClick={() => { setShowCloseOut(false); setActiveTab("wb-0"); setTimeout(() => scrollToMatchId((allWbRounds[0] || [])[0]), 30); }}
                       style={{ width: "100%", padding: "14px", background: `${GOLD}18`, border: `1px solid ${GOLD}`, borderRadius: 12, color: GOLD, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                       {wbInProgress ? "Continue to Main Bracket" : "Close Out Main Tournament"}
                     </button>
