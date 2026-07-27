@@ -12,7 +12,7 @@ const CARD2  = "#F1F5F9";
 const BORDER = "#E2E8F0";
 const TEXT   = "#0F172A";
 const MUTED  = "#64748B";
-const FONT   = "'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, system-ui, sans-serif";
+const FONT   = "Helvetica, Arial, sans-serif";
 const MONO   = "'SF Mono', 'Fira Code', 'Fira Mono', monospace";
 
 const STORAGE_KEY  = "tournament:active-state";
