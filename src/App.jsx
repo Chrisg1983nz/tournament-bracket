@@ -653,23 +653,28 @@ function BracketConnectorsOverlay({ containerRef, contentRef, matchMap, matchIds
 
     // Positions are computed in content-local coordinates (scroll offset is
     // added back in), so they stay correct across scroll - but only if we
-    // actually re-measure after each scroll/animation frame. Pill
-    // navigation triggers a smooth `scrollTo`, which does NOT fire
-    // ResizeObserver (nothing resizes, it just scrolls) and does NOT
-    // trigger a React re-render either, so without a scroll listener the
-    // overlay's `lines`/`size` state is left holding whatever it computed
-    // right when the tab was clicked - a stale snapshot from before the
-    // browser's smooth-scroll animation actually settles. That's what
-    // produced the disconnected/broken-looking lines. Re-measuring on
-    // every scroll frame (rAF-throttled) keeps it in sync throughout and
-    // after the animation.
-    let rafId = null;
+    // re-measure after a scroll happens. Pill navigation triggers a smooth
+    // `scrollTo`, which fires neither ResizeObserver (nothing resizes) nor
+    // a React re-render, so without a scroll listener the overlay's
+    // `lines`/`size` state is left holding a stale snapshot from before
+    // the animation ran.
+    //
+    // IMPORTANT: don't re-measure on every scroll/animation frame. Each
+    // measure() call reads getBoundingClientRect() for every match card,
+    // which forces a synchronous layout. Doing that dozens of times a
+    // second *while* a smooth-scroll animation is running causes iOS
+    // Safari/WKWebView to drop repaint tiles for the (expensive, DOM-tree)
+    // match cards while the (cheap, GPU-composited) SVG lines keep
+    // drawing fine - which is exactly the "lines are there but cards are
+    // blank" glitch. Instead, debounce: only measure once scrolling has
+    // actually stopped.
+    let debounceId = null;
     const scheduleMeasure = () => {
-      if (rafId != null) return;
-      rafId = requestAnimationFrame(() => {
-        rafId = null;
+      if (debounceId != null) clearTimeout(debounceId);
+      debounceId = setTimeout(() => {
+        debounceId = null;
         measure();
-      });
+      }, 120);
     };
 
     measure();
@@ -681,7 +686,7 @@ function BracketConnectorsOverlay({ containerRef, contentRef, matchMap, matchIds
       ro.disconnect();
       container.removeEventListener("scroll", scheduleMeasure);
       window.removeEventListener("resize", scheduleMeasure);
-      if (rafId != null) cancelAnimationFrame(rafId);
+      if (debounceId != null) clearTimeout(debounceId);
     };
   }, [containerRef, contentRef, matchMap, matchIds]);
 
@@ -2193,7 +2198,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
     if (!container) return;
     const target = i * (cardWidth + gutterWidth) - 16;
     container.scrollTo({ left: Math.max(0, target), top: 0, behavior: "smooth" });
-    window.scrollTo({ top: container.getBoundingClientRect().top + window.scrollY - 100, behavior: "smooth" });
+    window.scrollTo({ top: container.getBoundingClientRect().top + window.scrollY - 100, behavior: "auto" });
   };
 
   const roundTabs = [
@@ -2314,7 +2319,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
         </div>
       )}
 
-      <div ref={bracketScrollRef} style={{ overflowX: "auto", overflowY: "auto", padding: "24px 0 140px", WebkitOverflowScrolling: "touch" }}>
+      <div ref={bracketScrollRef} style={{ overflowX: "auto", overflowY: "auto", padding: "24px 0 140px" }}>
         <div style={{ display: "inline-flex", gap: 0, alignItems: "flex-start", padding: "0 16px", minWidth: "max-content" }}>
 
           {/* Winners bracket (+ Grand Final folded in as the tree's root when enabled) */}
