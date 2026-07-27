@@ -118,9 +118,9 @@ function useViewportScale() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
   // tiers: mobile (<640), tablet (640-1024), desktop (>1024)
-  if (width >= 1024) return { tier: "desktop", scale: 1.35, cardWidth: 250, pip: 13, btn: 26, btnFont: 16 };
-  if (width >= 640)  return { tier: "tablet",  scale: 1.15, cardWidth: 215, pip: 10, btn: 21, btnFont: 13 };
-  return { tier: "mobile", scale: 1, cardWidth: 198, pip: 8, btn: 17, btnFont: 11 };
+  if (width >= 1024) return { tier: "desktop", scale: 1.35, cardWidth: 310, btn: 28, btnFont: 17 };
+  if (width >= 640)  return { tier: "tablet",  scale: 1.15, cardWidth: 270, btn: 24, btnFont: 15 };
+  return { tier: "mobile", scale: 1, cardWidth: 240, btn: 22, btnFont: 14 };
 }
 
 // --- Generic helpers ----------------------------------------------------------
@@ -889,32 +889,29 @@ function Tooltip({ label, children }) {
 }
 
 function ScoreInline({ m, who, accent, onScore, scale }) {
-  const need = gamesToWin(m.bestOf || 3);
   if (m.isBye) return null;
-  const s = scale || { pip: 9, btn: 18, btnFont: 12 };
+  const s = scale || { btn: 18, btnFont: 12 };
   const games = Math.max(0, who === "p1" ? (m.p1Games || 0) : (m.p2Games || 0));
   const disabled = !!m.winner || !m.p1 || !m.p2;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: Math.round(s.btn * 0.3), flexShrink: 0 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
       <button
         disabled={disabled}
         onClick={(e) => { e.stopPropagation(); onScore(m.id, who, -1); }}
         style={pipBtnStyle(false, s)}
-      >-</button>
-      <div style={{ display: "flex", gap: 3, minWidth: (s.pip + 3) * need }}>
-        {Array.from({ length: need }).map((_, i) => (
-          <div key={i} style={{
-            width: s.pip, height: s.pip, borderRadius: Math.max(2, Math.round(s.pip * 0.25)),
-            background: i < games ? accent : BORDER,
-            transition: "background 0.15s",
-            flexShrink: 0,
-          }} />
-        ))}
-      </div>
+        aria-label={`Decrease ${who === "p1" ? "first" : "second"} player's score`}
+      >−</button>
+      <div aria-label={`${games} games`} style={{
+        minWidth: s.tier === "desktop" ? 24 : 20,
+        textAlign: "center", color: accent,
+        fontSize: s.tier === "desktop" ? 20 : 17,
+        fontWeight: 700, fontFamily: MONO, lineHeight: 1,
+      }}>{games}</div>
       <button
         disabled={disabled}
         onClick={(e) => { e.stopPropagation(); onScore(m.id, who, 1); }}
         style={pipBtnStyle(true, s)}
+        aria-label={`Increase ${who === "p1" ? "first" : "second"} player's score`}
       >+</button>
     </div>
   );
