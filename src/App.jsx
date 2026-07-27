@@ -615,18 +615,26 @@ function BracketConnectorsOverlay({ containerRef, contentRef, matchMap, matchIds
 
     const measure = () => {
       const contentRect = content.getBoundingClientRect();
-      const scrollLeft = container.scrollLeft;
-      const scrollTop = container.scrollTop;
       const pos = {};
       matchIds.forEach((id) => {
         const el = content.querySelector(`[data-match-id="${id}"]`);
         if (!el) return;
         const r = el.getBoundingClientRect();
+        // `content` is itself inside the scrolling container - it and its
+        // descendant cards move together as one rigid unit when you
+        // scroll, so a card's offset from content's own top-left corner
+        // (r.left - contentRect.left) is ALREADY invariant to scroll: both
+        // values shift by the same amount and the difference cancels out.
+        // (Earlier versions of this also added `container.scrollLeft` on
+        // top, which double-counted the scroll offset - correct only at
+        // scrollLeft 0, and increasingly wrong by exactly the scrolled
+        // distance every time it was re-measured after scrolling. That's
+        // what caused the lines to drift off to wherever you'd scrolled.)
         pos[id] = {
-          top: r.top - contentRect.top + scrollTop,
-          left: r.left - contentRect.left + scrollLeft,
-          right: r.right - contentRect.left + scrollLeft,
-          centerY: r.top - contentRect.top + scrollTop + r.height / 2,
+          top: r.top - contentRect.top,
+          left: r.left - contentRect.left,
+          right: r.right - contentRect.left,
+          centerY: r.top - contentRect.top + r.height / 2,
         };
       });
 
@@ -2199,6 +2207,22 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
     const target = i * (cardWidth + gutterWidth) - 16;
     container.scrollTo({ left: Math.max(0, target), top: 0, behavior: "smooth" });
     window.scrollTo({ top: container.getBoundingClientRect().top + window.scrollY - 100, behavior: "auto" });
+
+    // iOS WKWebView sometimes fails to paint tiles that scroll into view
+    // via a JS-triggered scrollTo (as opposed to a real touch gesture) -
+    // the compositor doesn't always realize new content needs rendering.
+    // Nudging a harmless style change forces a fresh paint. We do this
+    // both right away and again after the smooth-scroll animation would
+    // have finished, to catch content that scrolls in partway through.
+    const nudgeRepaint = () => {
+      if (!container) return;
+      container.style.opacity = "0.999";
+      requestAnimationFrame(() => {
+        if (container) container.style.opacity = "1";
+      });
+    };
+    requestAnimationFrame(nudgeRepaint);
+    setTimeout(nudgeRepaint, 400);
   };
 
   const roundTabs = [
@@ -2319,7 +2343,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
         </div>
       )}
 
-      <div ref={bracketScrollRef} style={{ overflowX: "auto", overflowY: "auto", padding: "24px 0 140px" }}>
+      <div ref={bracketScrollRef} style={{ overflowX: "auto", overflowY: "auto", padding: "24px 0 140px", transform: "translateZ(0)", WebkitTransform: "translateZ(0)", WebkitBackfaceVisibility: "hidden" }}>
         <div style={{ display: "inline-flex", gap: 0, alignItems: "flex-start", padding: "0 16px", minWidth: "max-content" }}>
 
           {/* Winners bracket (+ Grand Final folded in as the tree's root when enabled) */}
