@@ -593,29 +593,32 @@ function slotLabel(matchMap, matchId, slot) {
 }
 
 // --- Bracket layout math -------------------------------------------------------
-// A round pill is a focus control, not a different bracket.  The focused
-// column gets breathing room; every other column collapses into a compact
-// rail.  Keeping each column independent is deliberate: the old recursive
-// calculation only worked when Round 1 was selected.  Selecting a later
-// round made every column to its right progressively *larger*, which is the
-// opposite of the FIFA-style collapse interaction.
-const BRACKET_FOCUSED_GAP = 16;
-const BRACKET_COLLAPSED_GAP = 5;
+// FIFA's rail keeps a fixed, card-to-card "pitch" for the selected round,
+// then doubles that pitch for every round to its right.  Earlier rounds also
+// use the base pitch, which is what makes them collapse neatly when a later
+// round is selected.  The important detail is that the pitch is derived from
+// the selected round, rather than recursively from Round 1.
+const BRACKET_BASE_GAP = 14;
 // Height of the round title label (font-size 11 + marginBottom 12) above each
 // RoundCol's card list - connector gutters need this same top offset so their
 // lines land on the card-list baseline, not the title baseline.
 const BRACKET_TITLE_BLOCK_HEIGHT = 26;
 
 function computeRoundLayout(numRounds, activeIndex, cardHeight) {
-  const hasFocus = activeIndex >= 0 && activeIndex < numRounds;
-  const gaps = Array.from({ length: numRounds }, (_, i) =>
-    hasFocus && i === activeIndex ? BRACKET_FOCUSED_GAP : BRACKET_COLLAPSED_GAP
-  );
+  const focus = activeIndex >= 0 && activeIndex < numRounds ? activeIndex : 0;
+  const basePitch = cardHeight + BRACKET_BASE_GAP;
+  const gaps = [];
+  const offsets = [];
 
-  // All columns share a top edge while focused.  Connector positions are
-  // derived from these same values, so their elbows move with the cards
-  // instead of being left behind when a pill is pressed.
-  const offsets = Array.from({ length: numRounds }, () => 0);
+  for (let i = 0; i < numRounds; i++) {
+    // At and before the chosen round, cards use the compact base pitch.
+    // Each later round expands from that pitch, preserving true bracket
+    // midpoints and keeping connector elbows aligned with their targets.
+    const stepsAfterFocus = Math.max(0, i - focus);
+    const pitch = basePitch * Math.pow(2, stepsAfterFocus);
+    gaps[i] = Math.max(BRACKET_BASE_GAP, pitch - cardHeight);
+    offsets[i] = stepsAfterFocus === 0 ? 0 : (pitch - basePitch) / 2;
+  }
   return { gaps, offsets };
 }
 
