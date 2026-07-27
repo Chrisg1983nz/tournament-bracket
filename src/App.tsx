@@ -118,9 +118,9 @@ function useViewportScale() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
   // tiers: mobile (<640), tablet (640-1024), desktop (>1024)
-  if (width >= 1024) return { tier: "desktop", scale: 1.35, cardWidth: 310, btn: 28, btnFont: 17 };
-  if (width >= 640)  return { tier: "tablet",  scale: 1.15, cardWidth: 270, btn: 24, btnFont: 15 };
-  return { tier: "mobile", scale: 1, cardWidth: 240, btn: 22, btnFont: 14 };
+  if (width >= 1024) return { tier: "desktop", scale: 1.35, cardWidth: 350, btn: 28, btnFont: 17 };
+  if (width >= 640)  return { tier: "tablet",  scale: 1.15, cardWidth: 310, btn: 24, btnFont: 15 };
+  return { tier: "mobile", scale: 1, cardWidth: 280, btn: 22, btnFont: 14 };
 }
 
 // --- Generic helpers ----------------------------------------------------------
@@ -973,8 +973,8 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
         position: "absolute", inset: "0 auto 0 0", width: labelRailWidth,
         background: `${accent}18`, borderRight: `1px solid ${BORDER}`,
         display: "flex", alignItems: "center", justifyContent: "center",
-        color: accent, fontSize: s.tier === "desktop" ? 12 : 11,
-        fontFamily: MONO, letterSpacing: "0.08em", fontWeight: 700,
+        color: accent, fontSize: s.tier === "desktop" ? 14 : 13,
+        fontFamily: MONO, letterSpacing: "0.08em", fontWeight: 800,
         writingMode: "vertical-rl", transform: "rotate(180deg)",
         pointerEvents: "none",
       }}>{matchLabel}</div>
