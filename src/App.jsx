@@ -634,7 +634,26 @@ function BracketConnectorsOverlay({ containerRef, contentRef, matchMap, matchIds
           top: r.top - contentRect.top,
           left: r.left - contentRect.left,
           right: r.right - contentRect.left,
-          centerY: r.top - contentRect.top + r.height / 2,
+          centerY: (() => {
+            // Connector lines should meet exactly at the divider border
+            // between the two player rows, not the geometric center of
+            // the whole card (the header above the rows would throw that
+            // off) and not an average of the two rows' heights either
+            // (which silently assumes they render identically tall).
+            // Measuring the first row's own bottom edge directly gives
+            // the divider's real screen position with no assumptions.
+            const firstRow = el.querySelector('[data-first-row="true"]');
+            if (firstRow) {
+              const fr = firstRow.getBoundingClientRect();
+              return fr.bottom - contentRect.top;
+            }
+            const rows = el.querySelector('[data-player-rows="true"]');
+            if (rows) {
+              const rr = rows.getBoundingClientRect();
+              return rr.top - contentRect.top + rr.height / 2;
+            }
+            return r.top - contentRect.top + r.height / 2;
+          })(),
         };
       });
 
@@ -1043,6 +1062,7 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
         )}
       </div>
 
+      <div data-player-rows="true">
       {players.map(({ player, slot }, i) => {
         const fromLabel = !player ? slotLabel(matchMap, matchId, slot) : null;
         const isWinner  = settled && m.winner === player;
@@ -1052,6 +1072,7 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
         return (
           <div
             key={slot}
+            data-first-row={i === 0 ? "true" : undefined}
             onClick={() => {
               if (!canTap) return;
               if (settled && editing) { onChangeWinner(matchId, player); setEditing(false); }
@@ -1112,6 +1133,7 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
           </div>
         );
       })}
+      </div>
     </div>
   );
 }
