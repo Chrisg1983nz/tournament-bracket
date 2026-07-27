@@ -651,10 +651,38 @@ function BracketConnectorsOverlay({ containerRef, contentRef, matchMap, matchIds
       setSize({ w: content.scrollWidth, h: content.scrollHeight });
     };
 
+    // Positions are computed in content-local coordinates (scroll offset is
+    // added back in), so they stay correct across scroll - but only if we
+    // actually re-measure after each scroll/animation frame. Pill
+    // navigation triggers a smooth `scrollTo`, which does NOT fire
+    // ResizeObserver (nothing resizes, it just scrolls) and does NOT
+    // trigger a React re-render either, so without a scroll listener the
+    // overlay's `lines`/`size` state is left holding whatever it computed
+    // right when the tab was clicked - a stale snapshot from before the
+    // browser's smooth-scroll animation actually settles. That's what
+    // produced the disconnected/broken-looking lines. Re-measuring on
+    // every scroll frame (rAF-throttled) keeps it in sync throughout and
+    // after the animation.
+    let rafId = null;
+    const scheduleMeasure = () => {
+      if (rafId != null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        measure();
+      });
+    };
+
     measure();
-    const ro = new ResizeObserver(measure);
+    const ro = new ResizeObserver(scheduleMeasure);
     ro.observe(content);
-    return () => ro.disconnect();
+    container.addEventListener("scroll", scheduleMeasure, { passive: true });
+    window.addEventListener("resize", scheduleMeasure);
+    return () => {
+      ro.disconnect();
+      container.removeEventListener("scroll", scheduleMeasure);
+      window.removeEventListener("resize", scheduleMeasure);
+      if (rafId != null) cancelAnimationFrame(rafId);
+    };
   }, [containerRef, contentRef, matchMap, matchIds]);
 
   if (!size.w || !size.h) return null;
