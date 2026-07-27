@@ -649,7 +649,12 @@ function bracketCardCenter(offset, gap, cardHeight, k) {
 // p2FromMatchId) rather than assuming positional 2:1 pairing - this matters
 // because LB "merge" rounds pair an LB survivor with a freshly-dropped WB
 // loser, which breaks any simple index-based pairing assumption.
-function BracketConnectors({ feederRound, targetRound, matchMap, feederOffset, feederGap, targetOffset, targetGap, cardHeight, gutterWidth, color }) {
+function BracketConnectors({ feederRound, targetRound, matchMap, feederOffset, feederGap, targetOffset, targetGap, cardHeight, gutterWidth, color, hide }) {
+  // A large prelim pool can feed many different Round 1 positions. Drawing
+  // every long elbow in a narrow gutter produces an unreadable purple wall;
+  // the destination card already names its source match, so omit that one
+  // exceptional connector group while retaining every normal bracket link.
+  if (hide) return null;
   if (!feederRound || !targetRound || !feederRound.length || !targetRound.length || !cardHeight || !matchMap) return null;
   const lineStyle = { stroke: color, strokeWidth: 2, transition: "x1 0.35s cubic-bezier(0.4,0,0.2,1), x2 0.35s cubic-bezier(0.4,0,0.2,1), y1 0.35s cubic-bezier(0.4,0,0.2,1), y2 0.35s cubic-bezier(0.4,0,0.2,1)" };
   const xStart = 0, xMid = gutterWidth / 2, xEnd = gutterWidth;
@@ -2447,6 +2452,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                       targetOffset={isLastWbRound ? gfOffset : wbLayout.offsets[i + 1]}
                       targetGap={isLastWbRound ? 0 : wbLayout.gaps[i + 1]}
                       cardHeight={cardHeight} gutterWidth={gutterWidth} color={isLastWbRound ? GOLD : PURPLE}
+                      hide={!!prelimRound && i === 0}
                     />
                   </div>
                 )}
@@ -2524,6 +2530,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                           feederOffset={lbLayout.offsets[i]} feederGap={lbLayout.gaps[i]}
                           targetOffset={lbLayout.offsets[i + 1]} targetGap={lbLayout.gaps[i + 1]}
                           cardHeight={cardHeight} gutterWidth={gutterWidth} color={BLUE}
+                          hide={round.some(id => matchMap[id] && matchMap[id].isLBPrelim)}
                         />
                       </div>
                     )}
