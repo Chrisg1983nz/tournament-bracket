@@ -12,13 +12,14 @@ const CARD2  = "#F1F5F9";
 const BORDER = "#E2E8F0";
 const TEXT   = "#0F172A";
 const MUTED  = "#64748B";
-const FONT   = "'Helvetica Neue', Helvetica, Arial, sans-serif";
+const FONT   = "Helvetica, Arial, sans-serif";
 const MONO   = "'SF Mono', 'Fira Code', 'Fira Mono', monospace";
 
 const STORAGE_KEY  = "tournament:active-state";
 const HISTORY_KEY  = "tournament:history";
 const LOGO_KEY      = "tournament:logo";
 
+// --- History helpers ----------------------------------------------------------
 function loadHistory() {
   try {
     const raw = localStorage.getItem(HISTORY_KEY);
@@ -31,9 +32,11 @@ function loadHistory() {
 function saveToHistory(entry) {
   try {
     const history = loadHistory();
+    // Avoid duplicates: if an entry with the same id already exists, replace it
     const idx = history.findIndex(h => h.id === entry.id);
     if (idx >= 0) history[idx] = entry;
-    else history.unshift(entry);
+    else history.unshift(entry); // newest first
+    // Keep last 50 tournaments
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, 50)));
   } catch (e) {}
 }
@@ -45,6 +48,10 @@ function deleteFromHistory(id) {
   } catch (e) {}
 }
 
+// --- Logo helpers --------------------------------------------------------------
+// Reads an image file, downscales it (preserving aspect ratio) so it never
+// exceeds maxW x maxH, and returns a JPEG/PNG data URL - keeps the stored
+// logo to a "responsible" size regardless of what the user uploads.
 function resizeImageFile(file, maxW, maxH) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -70,15 +77,20 @@ function resizeImageFile(file, maxW, maxH) {
   });
 }
 
+// Build a compact summary of a completed bracket for history storage.
+// We store results rather than the full matchMap to keep size small.
 function summariseBracket(matchMap, players, grandFinalEnabled, winnersRounds, losersRounds, grandFinalId) {
   const wbFinalId = winnersRounds[winnersRounds.length - 1][0];
   const champion  = grandFinalEnabled
     ? (matchMap[grandFinalId] && matchMap[grandFinalId].winner)
     : (matchMap[wbFinalId] && matchMap[wbFinalId].winner);
-  if (!champion) return null;
+  if (!champion) return null; // not finished yet
 
+  // Flatten losersRounds (array of arrays of match ids) into a lookup set so
+  // every LB match - not just the LB Prelim round - can be reliably tagged.
   const lbMatchIdSet = new Set((losersRounds || []).flat());
 
+  // Build a compact results list: just settled non-bye matches
   const results = Object.values(matchMap)
     .filter(m => m.winner && !m.isBye)
     .sort((a, b) => a.matchNum - b.matchNum)
@@ -94,6 +106,10 @@ function summariseBracket(matchMap, players, grandFinalEnabled, winnersRounds, l
   return { champion, players, results };
 }
 
+// --- Responsive sizing --------------------------------------------------------
+// Mobile-first sizes scaled up modestly on wider viewports so touch targets
+// (especially the score +/- buttons) are comfortable on desktop without the
+// whole layout ballooning.
 function useViewportScale() {
   const [width, setWidth] = useState(() => (typeof window !== "undefined" ? window.innerWidth : 390));
   useEffect(() => {
@@ -101,11 +117,13 @@ function useViewportScale() {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
-  if (width >= 1024) return { tier: "desktop", scale: 1.35, cardWidth: 250, pip: 13, btn: 26, btnFont: 16 };
-  if (width >= 640)  return { tier: "tablet",  scale: 1.15, cardWidth: 215, pip: 10, btn: 21, btnFont: 13 };
-  return { tier: "mobile", scale: 1, cardWidth: 198, pip: 8, btn: 17, btnFont: 11 };
+  // tiers: mobile (<640), tablet (640-1024), desktop (>1024)
+  if (width >= 1024) return { tier: "desktop", scale: 1.35, cardWidth: 350, btn: 28, btnFont: 17 };
+  if (width >= 640)  return { tier: "tablet",  scale: 1.15, cardWidth: 310, btn: 24, btnFont: 15 };
+  return { tier: "mobile", scale: 1, cardWidth: 280, btn: 22, btnFont: 14 };
 }
 
+// --- Generic helpers ----------------------------------------------------------
 function nextPow2(n) { let p = 1; while (p < n) p *= 2; return p; }
 function isPow2(n)   { return n > 0 && (n & (n - 1)) === 0; }
 
@@ -118,8 +136,14 @@ function shuffleFisherYates(arr) {
   return a;
 }
 
+// Best-of helpers: given a "bestOf" (3/5/7) return games needed to win.
 function gamesToWin(bestOf) { return Math.ceil(bestOf / 2); }
+
 // --- Bracket Builder (double elimination) ------------------------------------
+/**
+ * Builds a double-elimination bracket using a PRELIM round for non-power-of-2
+ * player counts, so the main bracket is always a clean power of 2 with no BYEs.
+ */
 function buildBracket(rawPlayers, opts = {}) {
   const { shuffle = true, bestOf = 3, groupLosers = [] } = opts;
   const players = shuffle ? shuffleFisherYates(rawPlayers) : [...rawPlayers];
@@ -155,6 +179,7 @@ function buildBracket(rawPlayers, opts = {}) {
   const directPlayers = players.slice(0, mainSize - overflow);
   const prelimPlayers = players.slice(mainSize - overflow);
 
+  // -- Prelim Round ---------------------------------------------------------
   const prelimRound = [];
   const needsBye = prelimPlayers.length % 2 === 1;
   const prelimPairs = [];
@@ -175,6 +200,7 @@ function buildBracket(rawPlayers, opts = {}) {
     prelimRound.push(id);
   }
 
+  // -- Build WB R1 ----------------------------------------------------------
   const seedSlots = [
     ...directPlayers,
     ...prelimRound.map(id => ({ fromPrelim: id })),
@@ -213,6 +239,7 @@ function buildBracket(rawPlayers, opts = {}) {
     wbR1.push(id);
   }
 
+  // -- Winners Bracket subsequent rounds ------------------------------------
   const winnersRounds = [wbR1];
   let prev = wbR1;
   while (prev.length > 1) {
@@ -231,8 +258,12 @@ function buildBracket(rawPlayers, opts = {}) {
     prev = round;
   }
 
+  // -- Losers Bracket -------------------------------------------------------
+  // FIX: prelim losers pair against an EQUAL NUMBER of WB R1 losers in an
+  // explicit "LB Prelim" round. Any remaining WB R1 losers (the ones not
+  // paired against a prelim loser) move directly into LB R1.
   const losersRounds = [];
-  const wbRoundsForLosers = winnersRounds.slice(0, -1);
+  const wbRoundsForLosers = winnersRounds.slice(0, -1); // exclude WB Final
 
   const prelimLoserFeeders = prelimRound
     .filter(id => !matchMap[id].isBye)
@@ -279,6 +310,9 @@ function buildBracket(rawPlayers, opts = {}) {
 
   let lbPool = [];
 
+  // Group losers from a prior group stage enter the LB directly as pre-seeded
+  // players. We create a "group loser entry" match (isBye, auto-winner = the
+  // player) so they have a fromMatch reference for the propagation system.
   const groupLoserFeeders = (groupLosers || []).map(playerName => {
     const id = newMatch({
       p1: playerName, p2: "BYE",
@@ -288,6 +322,7 @@ function buildBracket(rawPlayers, opts = {}) {
     return { fromMatch: id, isLoser: false };
   });
 
+  // LB Prelim: pair prelim losers 1:1 against an equal number of WB R1 losers.
   if (prelimLoserFeeders.length > 0) {
     const pairCount = Math.min(prelimLoserFeeders.length, wbR1LoserFeeders.length);
     const lbPrelimMatchIds = [];
@@ -298,25 +333,33 @@ function buildBracket(rawPlayers, opts = {}) {
     }
     if (lbPrelimMatchIds.length) losersRounds.push(lbPrelimMatchIds);
 
+    // Any leftover prelim losers (shouldn't normally happen, but be safe)
     for (let i = pairCount; i < prelimLoserFeeders.length; i++) {
       lbPool.push(prelimLoserFeeders[i]);
     }
+    // Remaining WB R1 losers not used in LB Prelim go straight into the pool
+    // feeding LB R1 (paired among themselves first if needed).
     const leftoverWbR1 = wbR1LoserFeeders.slice(pairCount);
     if (leftoverWbR1.length) {
       const { matchIds, nextPool } = pairPool(leftoverWbR1);
+      // These play each other as LB R1 (or feed in alongside lbPool below)
       if (matchIds.length) {
         losersRounds.push(matchIds);
       }
       lbPool = [...lbPool, ...nextPool, ...(leftoverWbR1.length % 2 === 1 ? [] : [])];
     }
   } else {
+    // No prelim round at all - standard LB starts from WB R1 losers directly.
     lbPool = [...wbR1LoserFeeders];
   }
 
+  // Merge in any group-stage losers seeded directly into LB
   if (groupLoserFeeders.length > 0) {
     lbPool = [...lbPool, ...groupLoserFeeders];
   }
 
+  // Reduce lbPool until its size matches the next WB round's size (so each
+  // LB survivor can face a fresh WB drop-in 1:1).
   const targetSize = wbRoundsForLosers.length > 1 ? wbRoundsForLosers[1].length : 1;
 
   while (lbPool.length > targetSize) {
@@ -347,14 +390,14 @@ function buildBracket(rawPlayers, opts = {}) {
     lbPool = afterBattle;
   }
 
+  // -- Grand Final ----------------------------------------------------------
   const wbFinalId = winnersRounds[winnersRounds.length - 1][0];
 
-  // The loser of the Winners Bracket final has only lost once - in a true
-  // double-elimination format they deserve one more match in the Losers
-  // Bracket before being eliminated. Without this round, that player was
-  // simply dropped with nowhere to go once they lost the WB final.
-  // The winner of this extra round earns the Losers Bracket's spot in the
-  // Grand Final.
+  // FIX: the loser of the WB final has only lost once - true double
+  // elimination gives them one more match in the Losers Bracket before
+  // they're eliminated. Without this, that player was dropped with
+  // nowhere to go the moment they lost the WB final. The winner of this
+  // extra round earns the Losers Bracket's spot in the Grand Final.
   if (winnersRounds.length > 1) {
     while (lbPool.length > 1) {
       const { matchIds, nextPool } = pairPool(lbPool);
@@ -379,8 +422,8 @@ function buildBracket(rawPlayers, opts = {}) {
     matchMap[gfId].p2FromMatchId = lbFinalId;
   } else {
     // Degenerate case (e.g. a 2-player bracket): the WB final IS the only
-    // Winners round, so there was never a separate Losers Bracket player to
-    // face - the WB final's loser goes straight through to the Grand Final.
+    // Winners round, so there was never a separate Losers Bracket player -
+    // the WB final's loser goes straight through to the Grand Final.
     matchMap[wbFinalId].loserGoesToMatchId = gfId;
     matchMap[wbFinalId].loserGoesToSlot    = "p2";
     matchMap[gfId].p2FromMatchId = wbFinalId;
@@ -424,9 +467,11 @@ function buildSingleElim(rawPlayers, opts = {}) {
     return id;
   };
 
+  // Pad with BYEs to reach power-of-2
   const seeded = [...players];
-  while (seeded.length < mainSize) seeded.push(null);
+  while (seeded.length < mainSize) seeded.push(null); // null = BYE
 
+  // Build R1
   const r1 = [];
   for (let i = 0; i < mainSize / 2; i++) {
     const p1 = seeded[i];
@@ -452,8 +497,10 @@ function buildSingleElim(rawPlayers, opts = {}) {
       matchMap[prev[i + 1]].winnerGoesToSlot    = "p2";
       matchMap[id].p1FromMatchId = prev[i];
       matchMap[id].p2FromMatchId = prev[i + 1];
+      // Pre-populate if previous round was BYE
       if (matchMap[prev[i]].autoWinner) matchMap[id].p1 = matchMap[prev[i]].autoWinner;
       if (matchMap[prev[i + 1]].autoWinner) matchMap[id].p2 = matchMap[prev[i + 1]].autoWinner;
+      // Auto-resolve this match if both inputs are known from BYEs
       if (matchMap[id].p1 && matchMap[id].p2 === "BYE") {
         matchMap[id].winner = matchMap[id].p1;
         matchMap[id].isBye = true;
@@ -495,6 +542,8 @@ function propagate(matchMap, matchId, winner, loser) {
   return updated;
 }
 
+// Recursively clear a match's result and cascade-clear anything downstream
+// that depended on it (used both for undo and for changing a winner).
 function clearDownstream(matchMap, matchId) {
   const m = matchMap[matchId];
   if (!m) return matchMap;
@@ -536,6 +585,10 @@ function recordWinner(matchMap, matchId, winner) {
   return propagate(matchMap, matchId, winner, loser);
 }
 
+// Change a previously-recorded winner: clears anything downstream that used
+// the old result, then records the new one. Game scores are reset to a
+// clean winner/need-loser/0 state so edited matches never show stale or
+// inconsistent (e.g. negative) per-player scores.
 function changeWinner(matchMap, matchId, newWinner) {
   const m = matchMap[matchId];
   if (!m || m.isBye) return matchMap;
@@ -564,293 +617,124 @@ function slotLabel(matchMap, matchId, slot) {
     ? `Loser of Match ${src.matchNum}`
     : `Winner of Match ${src.matchNum}`;
 }
-// --- Bracket tree rendering -----------------------------------------------
-// Each match is rendered as a node in a real nested DOM tree: a match's own
-// card sits to the right of a column containing its two feeder subtrees,
-// and that column uses plain flexbox (`alignItems: "center"`) to center the
-// match against its feeders. This is the standard technique real bracket
-// UIs use - the browser's layout engine guarantees the centering is exactly
-// correct, for any mix of round sizes, with zero compounding and zero
-// manual math. Recursion naturally stops at a bracket-section boundary
-// (e.g. when an LB match's other feeder is a WB match) via the
-// `inScopeSet` check, so the Losers view never pulls in the entire Winners
-// tree - it just shows "Loser of Match N" as before.
-//
-// Spacing is a single fixed value everywhere - no per-round "active vs
-// collapsed" toggle. There's nothing to compute and nothing to get subtly
-// wrong: every round is always exactly this compact, all the time.
-//
-// This component ONLY handles positioning. Connector lines are drawn by a
-// separate overlay (BracketConnectorsOverlay) that measures the REAL
-// rendered position of each card and draws a short line directly between a
-// match and its immediate feeders - not a border spanning this node's whole
-// nested subtree, which is what a CSS-only connector would end up doing and
-// is what caused the long stray-looking lines.
-const BRACKET_GAP = 14;
 
-function BracketNode({ matchId, matchMap, inScopeSet, isLosers, grandFinalId, onPickWinner, onChangeWinner, onScore, useScoring, scale, editingMatchId, setEditingMatchId, readOnly, gutter, reserveTarget, spacerHeight, reverse }) {
-  const m = matchMap[matchId];
-  if (!m) return null;
+// --- Bracket layout math -------------------------------------------------------
+// FIFA's rail keeps a fixed, card-to-card "pitch" for the selected round,
+// then doubles that pitch for every round to its right.  Earlier rounds also
+// use the base pitch, which is what makes them collapse neatly when a later
+// round is selected.  The important detail is that the pitch is derived from
+// the selected round, rather than recursively from Round 1.
+const BRACKET_BASE_GAP = 14;
+// Height of the round title label (font-size 11 + marginBottom 12) above each
+// RoundCol's card list - connector gutters need this same top offset so their
+// lines land on the card-list baseline, not the title baseline.
+const BRACKET_TITLE_BLOCK_HEIGHT = 26;
 
-  const p1In = m.p1FromMatchId != null && inScopeSet.has(m.p1FromMatchId);
-  const p2In = m.p2FromMatchId != null && inScopeSet.has(m.p2FromMatchId);
-  const childCount = (p1In ? 1 : 0) + (p2In ? 1 : 0);
-  const isGF = grandFinalId != null && matchId === grandFinalId;
+// A clean knockout tree halves every round, but a Winners prelim can grow
+// (1 -> 8), a Losers round can merge new drop-ins (4 -> 4), and a Plate can
+// start with a bye.  FIFA's pitch-doubling rule still applies whenever a
+// round genuinely halves; otherwise, retain the previous pitch.
+function computeTopologyLayout(rounds, activeIndex, cardHeight) {
+  const focus = activeIndex >= 0 && activeIndex < rounds.length ? activeIndex : 0;
+  const basePitch = cardHeight + BRACKET_BASE_GAP;
+  const gaps = [];
+  const offsets = [];
+  let previousPitch = basePitch;
 
-  const cardEl = (
-    <div data-bracket-card="true" data-match-id={matchId} style={{ scrollMarginLeft: 16 }}>
-      <MatchCard
-        matchId={matchId} matchMap={matchMap}
-        onPickWinner={onPickWinner} onChangeWinner={onChangeWinner} onScore={onScore}
-        isLosers={isLosers} isGrandFinal={isGF} useScoring={useScoring} scale={scale}
-        editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={readOnly}
-      />
-    </div>
-  );
+  for (let i = 0; i < rounds.length; i++) {
+    if (i <= focus) {
+      gaps[i] = BRACKET_BASE_GAP;
+      offsets[i] = 0;
+      previousPitch = basePitch;
+      continue;
+    }
 
-  // How many feeder "slots" this match should reserve width for. Normally
-  // that's just however many real feeders it actually has (childCount).
-  // But if a prelim/bye round means some matches in the SAME round have an
-  // extra generation nested to their left and others don't (e.g. one WB
-  // Round-1 match receives a prelim winner, its siblings don't), the
-  // organically-narrower matches get positioned further left than their
-  // siblings, which throws every later round out of column alignment too.
-  // `reserveTarget` (computed once per round in BracketScreen) tells us
-  // the max feeder count actually present anywhere in this match's round,
-  // so we can pad the deficit with an invisible spacer of equal size.
-  const target = (reserveTarget && reserveTarget.has(matchId)) ? reserveTarget.get(matchId) : childCount;
-
-  if (childCount === 0 && target === 0) return cardEl;
-
-  const childProps = { matchMap, inScopeSet, isLosers, grandFinalId, onPickWinner, onChangeWinner, onScore, useScoring, scale, editingMatchId, setEditingMatchId, readOnly, gutter, reserveTarget, spacerHeight, reverse };
-
-  let deficit = Math.max(0, target - childCount);
-  const spacerStyle = { width: scale.cardWidth, minWidth: scale.cardWidth, height: spacerHeight || undefined, flexShrink: 0 };
-  const p1Slot = p1In ? <BracketNode matchId={m.p1FromMatchId} {...childProps} />
-    : (deficit > 0 ? (deficit--, <div style={spacerStyle} />) : null);
-  const p2Slot = p2In ? <BracketNode matchId={m.p2FromMatchId} {...childProps} />
-    : (deficit > 0 ? (deficit--, <div style={spacerStyle} />) : null);
-
-  return (
-    <div style={{ display: "flex", flexDirection: reverse ? "row-reverse" : "row", alignItems: "center" }}>
-      <div style={{ display: "flex", flexDirection: "column", gap: BRACKET_GAP }}>
-        {p1Slot}
-        {p2Slot}
-      </div>
-      <div style={{ width: gutter, flexShrink: 0 }} />
-      {cardEl}
-    </div>
-  );
+    const previousCount = Math.max(1, rounds[i - 1].length);
+    const currentCount = Math.max(1, rounds[i].length);
+    // Grow only when this round genuinely eliminates matches.  The cap keeps
+    // a prelim/bye from producing an exaggerated jump.
+    const ratio = currentCount < previousCount
+      ? Math.min(2, previousCount / currentCount)
+      : 1;
+    const pitch = previousPitch * ratio;
+    gaps[i] = Math.max(BRACKET_BASE_GAP, pitch - cardHeight);
+    offsets[i] = offsets[i - 1] + (pitch - previousPitch) / 2;
+    previousPitch = pitch;
+  }
+  return { gaps, offsets };
 }
 
-// Computes, for a set of rounds (e.g. allWbRounds or losersRounds), how
-// many feeder slots each match should reserve - the max feeder count seen
-// anywhere else in that SAME round. Only returns entries for matches that
-// actually need padding (i.e. the round is "mixed" - some matches have
-// more in-scope feeders than others), so normal symmetric rounds are
-// untouched.
-function computeReserveTargets(rounds, matchMap, inScopeSet) {
-  const target = new Map();
-  rounds.forEach((roundIds) => {
-    if (!roundIds || roundIds.length < 2) return;
-    const counts = roundIds.map((id) => {
-      const m = matchMap[id];
-      if (!m) return 0;
-      const p1In = m.p1FromMatchId != null && inScopeSet.has(m.p1FromMatchId);
-      const p2In = m.p2FromMatchId != null && inScopeSet.has(m.p2FromMatchId);
-      return (p1In ? 1 : 0) + (p2In ? 1 : 0);
-    });
-    const maxCount = Math.max(...counts);
-    if (maxCount === 0) return;
-    roundIds.forEach((id, i) => {
-      if (counts[i] < maxCount) target.set(id, maxCount);
-    });
+// Vertical center (relative to that round's card-list top) of card k in a
+// round with the given offset/gap/cardHeight.
+function bracketCardCenter(offset, gap, cardHeight, k) {
+  return offset + k * (cardHeight + gap) + cardHeight / 2;
+}
+
+// Draws the elbow ("bracket") connector lines in the gutter between two
+// adjacent rounds. Uses each target match's REAL feeders (p1FromMatchId /
+// p2FromMatchId) rather than assuming positional 2:1 pairing - this matters
+// because LB "merge" rounds pair an LB survivor with a freshly-dropped WB
+// loser, which breaks any simple index-based pairing assumption.
+function BracketConnectors({ feederRound, targetRound, matchMap, feederOffset, feederGap, targetOffset, targetGap, cardHeight, gutterWidth, color, hide }) {
+  // A large prelim pool can feed many different Round 1 positions. Drawing
+  // every long elbow in a narrow gutter produces an unreadable purple wall;
+  // the destination card already names its source match, so omit that one
+  // exceptional connector group while retaining every normal bracket link.
+  if (hide) return null;
+  if (!feederRound || !targetRound || !feederRound.length || !targetRound.length || !cardHeight || !matchMap) return null;
+  const lineStyle = { stroke: color, strokeWidth: 2, transition: "x1 0.35s cubic-bezier(0.4,0,0.2,1), x2 0.35s cubic-bezier(0.4,0,0.2,1), y1 0.35s cubic-bezier(0.4,0,0.2,1), y2 0.35s cubic-bezier(0.4,0,0.2,1)" };
+  const xStart = 0, xMid = gutterWidth / 2, xEnd = gutterWidth;
+  const feederIndexOf = new Map(feederRound.map((id, idx) => [id, idx]));
+  const lines = [];
+
+  targetRound.forEach((targetId, r) => {
+    const t = matchMap[targetId];
+    if (!t) return;
+    const feederIds = [t.p1FromMatchId, t.p2FromMatchId].filter(id => id != null && feederIndexOf.has(id));
+    const yMid = bracketCardCenter(targetOffset, targetGap, cardHeight, r);
+
+    if (feederIds.length === 2) {
+      // Both slots trace back into this round - classic elbow connector
+      const y1 = bracketCardCenter(feederOffset, feederGap, cardHeight, feederIndexOf.get(feederIds[0]));
+      const y2 = bracketCardCenter(feederOffset, feederGap, cardHeight, feederIndexOf.get(feederIds[1]));
+      lines.push(<line key={`a-${targetId}`} x1={xStart} y1={y1} x2={xMid} y2={y1} style={lineStyle} />);
+      lines.push(<line key={`b-${targetId}`} x1={xStart} y1={y2} x2={xMid} y2={y2} style={lineStyle} />);
+      lines.push(<line key={`c-${targetId}`} x1={xMid} y1={y1} x2={xMid} y2={y2} style={lineStyle} />);
+      lines.push(<line key={`d-${targetId}`} x1={xMid} y1={yMid} x2={xEnd} y2={yMid} style={lineStyle} />);
+    } else if (feederIds.length === 1) {
+      // Only one slot traces back into this round (the other is a bye, a
+      // direct seed, or - in LB merge rounds - a loser dropping in from a
+      // WB round we're not drawing a connector to here). Draw one line.
+      const y = bracketCardCenter(feederOffset, feederGap, cardHeight, feederIndexOf.get(feederIds[0]));
+      lines.push(<line key={`s-${targetId}`} x1={xStart} y1={y} x2={xEnd} y2={yMid} style={lineStyle} />);
+    }
+    // 0 feeders in this round: nothing traceable here, draw nothing.
   });
-  return target;
-}
 
-// Measures the REAL rendered position of every in-scope match card (after
-// paint, via ResizeObserver so it stays correct across re-renders) and
-// draws short connector lines directly between a match and its immediate
-// feeders' actual card edges - never a line spanning more than that.
-// Coordinates are computed relative to `contentRef`'s own box plus the
-// container's current scroll offset, which stays stable regardless of
-// scroll position (scrolling the container doesn't require re-measuring).
-function BracketConnectorsOverlay({ containerRef, contentRef, matchMap, matchIds, color, reverse }) {
-  const [lines, setLines] = useState([]);
-  const [size, setSize] = useState({ w: 0, h: 0 });
+  if (!lines.length) return null;
 
-  useEffect(() => {
-    const container = containerRef.current;
-    const content = contentRef.current;
-    if (!container || !content) return;
-
-    const measure = () => {
-      const contentRect = content.getBoundingClientRect();
-      const pos = {};
-      matchIds.forEach((id) => {
-        const el = content.querySelector(`[data-match-id="${id}"]`);
-        if (!el) return;
-        const r = el.getBoundingClientRect();
-        // `content` is itself inside the scrolling container - it and its
-        // descendant cards move together as one rigid unit when you
-        // scroll, so a card's offset from content's own top-left corner
-        // (r.left - contentRect.left) is ALREADY invariant to scroll: both
-        // values shift by the same amount and the difference cancels out.
-        // (Earlier versions of this also added `container.scrollLeft` on
-        // top, which double-counted the scroll offset - correct only at
-        // scrollLeft 0, and increasingly wrong by exactly the scrolled
-        // distance every time it was re-measured after scrolling. That's
-        // what caused the lines to drift off to wherever you'd scrolled.)
-        pos[id] = {
-          top: r.top - contentRect.top,
-          left: r.left - contentRect.left,
-          right: r.right - contentRect.left,
-          centerY: (() => {
-            // Connector lines should meet exactly at the divider border
-            // between the two player rows, not the geometric center of
-            // the whole card (the header above the rows would throw that
-            // off) and not an average of the two rows' heights either
-            // (which silently assumes they render identically tall).
-            // Measuring the first row's own bottom edge directly gives
-            // the divider's real screen position with no assumptions.
-            const firstRow = el.querySelector('[data-first-row="true"]');
-            if (firstRow) {
-              const fr = firstRow.getBoundingClientRect();
-              return fr.bottom - contentRect.top;
-            }
-            const rows = el.querySelector('[data-player-rows="true"]');
-            if (rows) {
-              const rr = rows.getBoundingClientRect();
-              return rr.top - contentRect.top + rr.height / 2;
-            }
-            return r.top - contentRect.top + r.height / 2;
-          })(),
-        };
-      });
-
-      const nextLines = [];
-      matchIds.forEach((id) => {
-        const m = matchMap[id];
-        const target = pos[id];
-        if (!m || !target) return;
-        const feederIds = [m.p1FromMatchId, m.p2FromMatchId].filter((f) => f != null && pos[f]);
-        // Normally feeders sit to the LEFT of their target, so the near
-        // edges are the feeders' right edges and the target's left edge.
-        // In a mirrored (right-to-left) tree, feeders sit to the RIGHT of
-        // their target instead, so the near edges flip accordingly.
-        const xEnd = reverse ? target.right : target.left;
-        if (feederIds.length === 2) {
-          const a = pos[feederIds[0]], b = pos[feederIds[1]];
-          const xStart = reverse ? Math.min(a.left, b.left) : Math.max(a.right, b.right);
-          const xMid = (xStart + xEnd) / 2;
-          nextLines.push({ key: `${id}-elbow`, kind: "elbow", xStart, xMid, xEnd, y1: a.centerY, y2: b.centerY, yMid: target.centerY });
-        } else if (feederIds.length === 1) {
-          const a = pos[feederIds[0]];
-          const xStart = reverse ? a.left : a.right;
-          nextLines.push({ key: `${id}-straight`, kind: "straight", xStart, xEnd, y1: a.centerY, y2: target.centerY });
-        }
-      });
-      setLines(nextLines);
-      setSize({ w: content.scrollWidth, h: content.scrollHeight });
-    };
-
-    // Positions are computed in content-local coordinates (scroll offset is
-    // added back in), so they stay correct across scroll - but only if we
-    // re-measure after a scroll happens. Pill navigation triggers a smooth
-    // `scrollTo`, which fires neither ResizeObserver (nothing resizes) nor
-    // a React re-render, so without a scroll listener the overlay's
-    // `lines`/`size` state is left holding a stale snapshot from before
-    // the animation ran.
-    //
-    // IMPORTANT: don't re-measure on every scroll/animation frame. Each
-    // measure() call reads getBoundingClientRect() for every match card,
-    // which forces a synchronous layout. Doing that dozens of times a
-    // second *while* a smooth-scroll animation is running causes iOS
-    // Safari/WKWebView to drop repaint tiles for the (expensive, DOM-tree)
-    // match cards while the (cheap, GPU-composited) SVG lines keep
-    // drawing fine - which is exactly the "lines are there but cards are
-    // blank" glitch. Instead, debounce: only measure once scrolling has
-    // actually stopped.
-    let debounceId = null;
-    const scheduleMeasure = () => {
-      if (debounceId != null) clearTimeout(debounceId);
-      debounceId = setTimeout(() => {
-        debounceId = null;
-        measure();
-      }, 120);
-    };
-
-    measure();
-    const ro = new ResizeObserver(scheduleMeasure);
-    ro.observe(content);
-    container.addEventListener("scroll", scheduleMeasure, { passive: true });
-    window.addEventListener("resize", scheduleMeasure);
-    return () => {
-      ro.disconnect();
-      container.removeEventListener("scroll", scheduleMeasure);
-      window.removeEventListener("resize", scheduleMeasure);
-      if (debounceId != null) clearTimeout(debounceId);
-    };
-  }, [containerRef, contentRef, matchMap, matchIds, reverse]);
-
-  if (!size.w || !size.h) return null;
+  const feederExtent = feederOffset + feederRound.length * (cardHeight + feederGap);
+  const targetExtent = targetOffset + targetRound.length * (cardHeight + targetGap);
+  const height = Math.max(feederExtent, targetExtent) + 40;
 
   return (
-    <svg
-      width={size.w} height={size.h}
-      style={{ position: "absolute", top: 0, left: 0, pointerEvents: "none", zIndex: 0 }}
-    >
-      {lines.map((l) => {
-        const lineStyle = { stroke: color, strokeWidth: 2 };
-        if (l.kind === "elbow") {
-          return (
-            <g key={l.key}>
-              <line x1={l.xStart} y1={l.y1} x2={l.xMid} y2={l.y1} style={lineStyle} />
-              <line x1={l.xStart} y1={l.y2} x2={l.xMid} y2={l.y2} style={lineStyle} />
-              <line x1={l.xMid} y1={l.y1} x2={l.xMid} y2={l.y2} style={lineStyle} />
-              <line x1={l.xMid} y1={l.yMid} x2={l.xEnd} y2={l.yMid} style={lineStyle} />
-            </g>
-          );
-        }
-        return <line key={l.key} x1={l.xStart} y1={l.y1} x2={l.xEnd} y2={l.y2} style={lineStyle} />;
-      })}
+    <svg width={gutterWidth} height={height} style={{ display: "block", overflow: "visible" }}>
+      {lines}
     </svg>
   );
 }
 
-// A plain header row of round labels, aligned with the tree below it by
-// using the exact same card-width + gutter sequence (card width is fixed
-// - so this always lines up with the actual columns without needing to
-// measure anything).
-function RoundLabelsRow({ count, labelFn, color, cardWidth, gutter, extraLabel, extraColor, reverse }) {
-  const items = [];
-  for (let i = 0; i < count; i++) {
-    items.push(
-      <div key={`l-${i}`} style={{ width: cardWidth, flexShrink: 0, fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color, paddingLeft: 2, whiteSpace: "nowrap" }}>
-        {labelFn(i)}
-      </div>
-    );
-    if (i < count - 1 || extraLabel) items.push(<div key={`g-${i}`} style={{ width: gutter, flexShrink: 0 }} />);
-  }
-  if (extraLabel) {
-    items.push(
-      <div key="extra" style={{ width: cardWidth, flexShrink: 0, fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: extraColor, paddingLeft: 2, whiteSpace: "nowrap" }}>
-        {extraLabel}
-      </div>
-    );
-  }
-  return <div style={{ display: "flex", flexDirection: reverse ? "row-reverse" : "row", marginBottom: 12 }}>{items}</div>;
-}
-
-
 // --- Score entry helpers ------------------------------------------------------
 function applyScoreChange(matchMap, matchId, who, delta) {
   const m = matchMap[matchId];
-  if (!m || m.isBye || m.winner) return matchMap;
+  if (!m || m.isBye || m.winner) return matchMap; // locked once decided
   const need = gamesToWin(m.bestOf || 3);
   let p1Games = m.p1Games || 0;
   let p2Games = m.p2Games || 0;
+  // Clamp to [0, need] so a score can never go negative, and a player's
+  // game count can never exceed what's needed to win (e.g. best of 3 ->
+  // max 2). The loser keeps whatever count they reached, e.g. a 2-0 leaves
+  // the loser at 0, a 2-1 leaves the loser at 1.
   if (who === "p1") p1Games = Math.max(0, Math.min(need, p1Games + delta));
   else p2Games = Math.max(0, Math.min(need, p2Games + delta));
 
@@ -868,8 +752,10 @@ function applyScoreChange(matchMap, matchId, who, delta) {
 // ROUND ROBIN GROUP STAGE
 // ===========================================================================
 
+// Distribute n players into k groups, sizes differing by at most 1.
 function distributeGroups(players, groupCount) {
   const groups = Array.from({ length: groupCount }, () => []);
+  // Snake-seed for fairness (1->A,2->B,...,then reverse) using shuffled order
   const shuffled = shuffleFisherYates(players);
   let gi = 0, dir = 1;
   for (const p of shuffled) {
@@ -882,6 +768,7 @@ function distributeGroups(players, groupCount) {
 }
 
 function suggestGroupCount(n) {
+  // Aim for groups of 3-5 players where possible.
   if (n <= 5) return 1;
   for (const target of [4, 5, 3]) {
     const k = Math.round(n / target);
@@ -891,6 +778,7 @@ function suggestGroupCount(n) {
 }
 
 function buildRoundRobinMatches(group, bestOf) {
+  // Round-robin pairing (circle method), with BYE row if odd.
   const players = [...group];
   const hasBye = players.length % 2 === 1;
   if (hasBye) players.push("__BYE__");
@@ -973,6 +861,7 @@ function computeStandings(group, matches, tiebreakOverrides) {
 // UI: shared bits
 // ===========================================================================
 
+// --- Tooltip ------------------------------------------------------------------
 function Tooltip({ label, children }) {
   const [visible, setVisible] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
@@ -1026,32 +915,29 @@ function Tooltip({ label, children }) {
 }
 
 function ScoreInline({ m, who, accent, onScore, scale }) {
-  const need = gamesToWin(m.bestOf || 3);
   if (m.isBye) return null;
-  const s = scale || { pip: 9, btn: 18, btnFont: 12 };
+  const s = scale || { btn: 18, btnFont: 12 };
   const games = Math.max(0, who === "p1" ? (m.p1Games || 0) : (m.p2Games || 0));
   const disabled = !!m.winner || !m.p1 || !m.p2;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: Math.round(s.btn * 0.3), flexShrink: 0 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
       <button
         disabled={disabled}
         onClick={(e) => { e.stopPropagation(); onScore(m.id, who, -1); }}
         style={pipBtnStyle(false, s)}
-      >-</button>
-      <div style={{ display: "flex", gap: 3, minWidth: (s.pip + 3) * need }}>
-        {Array.from({ length: need }).map((_, i) => (
-          <div key={i} style={{
-            width: s.pip, height: s.pip, borderRadius: Math.max(2, Math.round(s.pip * 0.25)),
-            background: i < games ? accent : BORDER,
-            transition: "background 0.15s",
-            flexShrink: 0,
-          }} />
-        ))}
-      </div>
+        aria-label={`Decrease ${who === "p1" ? "first" : "second"} player's score`}
+      >−</button>
+      <div aria-label={`${games} games`} style={{
+        minWidth: s.tier === "desktop" ? 24 : 20,
+        textAlign: "center", color: accent,
+        fontSize: s.tier === "desktop" ? 20 : 17,
+        fontWeight: 700, fontFamily: MONO, lineHeight: 1,
+      }}>{games}</div>
       <button
         disabled={disabled}
         onClick={(e) => { e.stopPropagation(); onScore(m.id, who, 1); }}
         style={pipBtnStyle(true, s)}
+        aria-label={`Increase ${who === "p1" ? "first" : "second"} player's score`}
       >+</button>
     </div>
   );
@@ -1081,10 +967,10 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
   const ready   = m.p1 && m.p2 && !m.winner && !m.isBye && m.p1 !== "BYE" && m.p2 !== "BYE";
   const settled = !!m.winner;
 
-  const headerLabel = isGrandFinal ? "GRAND FINAL"
-    : isLosers ? `LB - MATCH ${m.matchNum}`
-    : `MATCH ${m.matchNum}`;
+  const matchLabel = isGrandFinal ? "FINAL" : `M ${m.matchNum}`;
+  const labelRailWidth = s.tier === "desktop" ? 58 : 50;
 
+  // editing state is lifted to parent so it survives tab switches
   const editing = editingMatchId === matchId;
   const setEditing = (v) => setEditingMatchId && setEditingMatchId(v ? matchId : null);
 
@@ -1102,44 +988,43 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
         fontFamily: FONT,
         boxShadow: isGrandFinal && settled ? `0 0 24px ${GOLD}44` : "none",
         overflow: "hidden",
+        position: "relative",
       }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
+      {/* FIFA-style match label rail: it no longer consumes vertical space,
+          so the visual/card centre is the centre of the two player rows. */}
       <div style={{
-        padding: "5px 10px",
-        fontSize: 11,
-        fontFamily: MONO,
-        color: accent,
-        letterSpacing: "0.1em",
-        fontWeight: 700,
-        background: `${accent}18`,
-        borderBottom: `1px solid ${BORDER}`,
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-      }}>
-        <span>{headerLabel}</span>
-        {ready && !useScoring && <span style={{ color: MUTED, fontSize: 11 }}>TAP TO PICK</span>}
-        {settled && !editing && !readOnly && (
-          <span
-            onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-            style={{ fontSize: 11, color: GREEN, cursor: "pointer", opacity: hovered ? 1 : 0.7 }}
-            title="Tap to change winner"
-          >{hovered ? "v EDIT" : "v"}</span>
-        )}
-        {settled && !editing && readOnly && (
-          <span style={{ fontSize: 11, color: GREEN }}>v</span>
-        )}
-        {settled && editing && (
-          <span
-            onClick={(e) => { e.stopPropagation(); setEditing(false); }}
-            style={{ fontSize: 11, color: MUTED, cursor: "pointer", fontWeight: 700 }}
-          >x CANCEL</span>
-        )}
-      </div>
+        position: "absolute", inset: "0 auto 0 0", width: labelRailWidth,
+        background: `${accent}18`, borderRight: `1px solid ${BORDER}`,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        color: accent, fontSize: s.tier === "desktop" ? 14 : 13,
+        fontFamily: MONO, letterSpacing: "0.08em", fontWeight: 800,
+        writingMode: "vertical-rl", transform: "rotate(180deg)",
+        pointerEvents: "none",
+      }}>{matchLabel}</div>
 
-      <div data-player-rows="true">
+      {(ready && !useScoring) && (
+        <div style={{ position: "absolute", top: 7, right: 9, zIndex: 1, color: MUTED, fontSize: 10, fontFamily: MONO, letterSpacing: "0.06em", pointerEvents: "none" }}>TAP</div>
+      )}
+      {settled && !editing && !readOnly && (
+        <span
+          onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+          style={{ position: "absolute", top: 7, right: 9, zIndex: 1, fontSize: 10, color: GREEN, cursor: "pointer", opacity: hovered ? 1 : 0.7, fontFamily: MONO }}
+          title="Tap to change winner"
+        >{hovered ? "EDIT" : "v"}</span>
+      )}
+      {settled && !editing && readOnly && (
+        <span style={{ position: "absolute", top: 7, right: 9, zIndex: 1, fontSize: 10, color: GREEN, fontFamily: MONO }}>v</span>
+      )}
+      {settled && editing && (
+        <span
+          onClick={(e) => { e.stopPropagation(); setEditing(false); }}
+          style={{ position: "absolute", top: 7, right: 9, zIndex: 1, fontSize: 10, color: MUTED, cursor: "pointer", fontWeight: 700, fontFamily: MONO }}
+        >CANCEL</span>
+      )}
+
       {players.map(({ player, slot }, i) => {
         const fromLabel = !player ? slotLabel(matchMap, matchId, slot) : null;
         const isWinner  = settled && m.winner === player;
@@ -1149,7 +1034,6 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
         return (
           <div
             key={slot}
-            data-first-row={i === 0 ? "true" : undefined}
             onClick={() => {
               if (!canTap) return;
               if (settled && editing) { onChangeWinner(matchId, player); setEditing(false); }
@@ -1157,6 +1041,7 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
             }}
             style={{
               padding: s.tier === "desktop" ? "12px 14px 11px" : s.tier === "tablet" ? "10px 12px 9px" : "9px 10px 8px",
+              paddingLeft: labelRailWidth + (s.tier === "desktop" ? 14 : s.tier === "tablet" ? 12 : 10),
               borderBottom: i === 0 ? `1px solid ${BORDER}` : "none",
               background: isWinner ? `${accent}22` : isLoserP ? "#ffffff08" : "transparent",
               cursor: canTap ? "pointer" : "default",
@@ -1210,7 +1095,6 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, i
           </div>
         );
       })}
-      </div>
     </div>
   );
 }
@@ -1232,6 +1116,44 @@ function SaveBadge({ status, error }) {
     }}>{cfg.label}</div>
   );
 }
+
+function RoundCol({ title, matchIds, matchMap, onPickWinner, onChangeWinner, onScore, isLosers, isGrandFinal, spacing, offset, useScoring, scale, editingMatchId, setEditingMatchId, readOnly, isActive }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", flexShrink: 0 }}>
+      <div style={{
+        fontSize: 11, fontFamily: "inherit",
+        color: isGrandFinal ? GOLD : isLosers ? BLUE : PURPLE,
+        letterSpacing: "0.08em", fontWeight: 700, marginBottom: 12,
+        textTransform: "uppercase", paddingLeft: 2,
+        opacity: isActive === false ? 0.55 : 1,
+        transition: "opacity 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
+      }}>{title}</div>
+
+      <div style={{
+        display: "flex", flexDirection: "column", gap: (spacing != null ? spacing : 16),
+        justifyContent: "flex-start", flex: 1,
+        paddingTop: offset || 0,
+        transition: "gap 0.35s cubic-bezier(0.4, 0, 0.2, 1), padding-top 0.35s cubic-bezier(0.4, 0, 0.2, 1)",
+      }}>
+        {(Array.isArray(matchIds) ? matchIds : [matchIds]).map(id => (
+          <div key={id} data-bracket-card="true">
+            <MatchCard
+              matchId={id} matchMap={matchMap}
+              onPickWinner={onPickWinner} onChangeWinner={onChangeWinner} onScore={onScore}
+              isLosers={isLosers} isGrandFinal={isGrandFinal} useScoring={useScoring} scale={scale}
+              editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={readOnly}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
+// ===========================================================================
+// SETUP SCREEN
+// ===========================================================================
 
 // ===========================================================================
 // HISTORY SCREEN
@@ -1260,6 +1182,7 @@ function HistoryScreen({ onBack }) {
 
   return (
     <div style={{ minHeight: "100vh", background: BG, color: TEXT, fontFamily: FONT }}>
+      {/* Header */}
       <div style={{ background: CARD, borderBottom: `1px solid ${BORDER}`, padding: "14px 20px", position: "sticky", top: 0, zIndex: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <button onClick={onBack} style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT, padding: "6px 12px", cursor: "pointer", fontSize: 14, fontFamily: "inherit", flexShrink: 0 }}>Back</button>
@@ -1282,15 +1205,19 @@ function HistoryScreen({ onBack }) {
         {history.map((entry) => {
           const isOpen = expanded === entry.id;
           const isConfirm = confirmDelete === entry.id;
+
+          // Group results by round type for display
           const allResults = entry.results || [];
 
           return (
             <div key={entry.id} style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, marginBottom: 12, overflow: "hidden" }}>
+              {/* Entry header */}
               <div
                 onClick={() => setExpanded(isOpen ? null : entry.id)}
                 style={{ padding: "12px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
+                  {/* Single compact line: name/date - champion - format - players */}
                   <div style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden" }}>
                     <span style={{ fontSize: 14, fontWeight: 700, flexShrink: 0, maxWidth: "40%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {entry.name || formatDate(entry.completedAt)}
@@ -1316,8 +1243,11 @@ function HistoryScreen({ onBack }) {
                 <div style={{ fontSize: 20, color: MUTED, flexShrink: 0 }}>{isOpen ? "v" : ">"}</div>
               </div>
 
+              {/* Expanded detail */}
               {isOpen && (
                 <div style={{ borderTop: `1px solid ${BORDER}`, padding: "14px 16px" }}>
+
+                  {/* Players */}
                   <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Players</div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 18 }}>
                     {(entry.players || []).map((p) => (
@@ -1333,6 +1263,7 @@ function HistoryScreen({ onBack }) {
                     ))}
                   </div>
 
+                  {/* Results */}
                   {allResults.length > 0 && (
                     <>
                       <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Results</div>
@@ -1362,6 +1293,7 @@ function HistoryScreen({ onBack }) {
                     </>
                   )}
 
+                  {/* Group stage summary */}
                   {entry.groupSummary && (
                     <>
                       <div style={{ fontSize: 11, fontWeight: 600, color: MUTED, textTransform: "uppercase", letterSpacing: "0.06em", marginTop: 18, marginBottom: 10 }}>Group Stage</div>
@@ -1381,6 +1313,7 @@ function HistoryScreen({ onBack }) {
                     </>
                   )}
 
+                  {/* Delete */}
                   <div style={{ marginTop: 18, borderTop: `1px solid ${BORDER}`, paddingTop: 14 }}>
                     {!isConfirm ? (
                       <button onClick={() => setConfirmDelete(entry.id)} style={{ background: "transparent", border: `1px solid ${BORDER}`, borderRadius: 8, color: MUTED, fontSize: 13, padding: "6px 14px", cursor: "pointer", fontFamily: "inherit" }}>
@@ -1403,24 +1336,28 @@ function HistoryScreen({ onBack }) {
     </div>
   );
 }
+
+
 // ===========================================================================
 // SETUP SCREEN
 // ===========================================================================
 
 function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt, onResume, onDiscard, loadError, onHistory, logoDataUrl, onSetLogo }) {
-  const [mode, setMode] = useState("bracket");
+  const [mode, setMode] = useState("bracket"); // "bracket" | "groups"
   const [tournamentName, setTournamentName] = useState("");
   const [count, setCount] = useState(8);
   const [names, setNames] = useState(Array.from({ length: 8 }, () => ""));
   const [grandFinalEnabled, setGrandFinalEnabled] = useState(true);
-  const [elimType, setElimType] = useState("double");
+  const [elimType, setElimType] = useState("double"); // "single" | "double"
   const [bestOf, setBestOf] = useState(3);
   const [useScoring, setUseScoring] = useState(true);
 
+  // Group stage settings
   const [groupCount, setGroupCount] = useState(2);
   const [advancePerGroup, setAdvancePerGroup] = useState(2);
   const [groupsTouched, setGroupsTouched] = useState(false);
 
+  // Plate settings (shared across both modes)
   const [plateEnabled, setPlateEnabled] = useState(false);
   const [platePlayers, setPlatePlayers] = useState([]);
 
@@ -1448,16 +1385,19 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
   const scale = useViewportScale();
   const contentMaxWidth = scale.tier === "desktop" ? 640 : "none";
 
+  // Sync plate players list when names change (for bracket mode)
+  // Don't auto-manage for groups - plate is chosen at advance time
   const cleanNames = names.map((n, i) => n.trim() || `Player ${i + 1}`);
 
   const logoInputRef = useRef(null);
   const [logoError, setLogoError] = useState(null);
   const handleLogoFile = async (e) => {
     const file = e.target.files && e.target.files[0];
-    e.target.value = "";
+    e.target.value = ""; // allow re-selecting the same file later
     if (!file) return;
     if (!file.type.startsWith("image/")) { setLogoError("Please choose an image file"); return; }
     try {
+      // Cap to a responsible display size (400x200), preserving aspect ratio
       const dataUrl = await resizeImageFile(file, 400, 200);
       onSetLogo && onSetLogo(dataUrl);
       setLogoError(null);
@@ -1526,6 +1466,7 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
           </div>
         )}
 
+        {/* Tournament name */}
         <div style={{ padding: "20px 20px 0" }}>
           <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 10, textTransform: "uppercase" }}>Tournament Name</div>
           <input
@@ -1537,6 +1478,7 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
           <div style={{ fontSize: 12, color: MUTED, marginTop: 6 }}>Optional - the date will be used if left blank.</div>
         </div>
 
+        {/* Mode toggle */}
         <div style={{ padding: "20px 20px 0" }}>
           <div style={{ display: "flex", gap: 8, background: CARD2, padding: 4, borderRadius: 12, border: `1px solid ${BORDER}` }}>
             {[{ k: "bracket", l: "Knockout Only" }, { k: "groups", l: "Groups + Knockout" }].map(({ k, l }) => (
@@ -1552,6 +1494,7 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
 
         <div style={{ padding: "24px 20px 0" }}>
 
+          {/* Scoring */}
           <div style={{ marginBottom: 20 }}>
             <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Scoring</div>
             <div onClick={() => setUseScoring(v => !v)} style={{
@@ -1582,6 +1525,7 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
             )}
           </div>
 
+          {/* Elim format - knockout-only mode */}
           {mode === "bracket" && (
             <div style={{ marginBottom: 20 }}>
               <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Format</div>
@@ -1614,6 +1558,7 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
             </div>
           )}
 
+          {/* Plate tournament */}
           <div style={{ marginBottom: 24 }}>
             <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Plate Tournament</div>
             <div onClick={() => setPlateEnabled(v => !v)} style={{
@@ -1633,6 +1578,7 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
             </div>
           </div>
 
+          {/* Group settings */}
           {mode === "groups" && (
             <div style={{ marginBottom: 28 }}>
               <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Groups</div>
@@ -1684,6 +1630,7 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
             </div>
           )}
 
+          {/* Player count */}
           <div style={{ marginBottom: 28 }}>
             <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Number of Players</div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1699,6 +1646,10 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
                   const raw = e.target.value;
                   const v = parseInt(raw, 10);
                   if (isNaN(v)) return;
+                  // Only sanity-cap during typing (avoid runaway array growth from
+                  // a stray extra digit); the real 2-64 clamp happens on blur.
+                  // Clamping the true minimum here would corrupt multi-digit entry:
+                  // typing "1" of "16" would jump to "2", then "6" appends to make "26".
                   const c = Math.max(0, Math.min(200, v));
                   setCount(c);
                   setNames(prev => {
@@ -1739,6 +1690,7 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
             )}
           </div>
 
+          {/* Player names */}
           <div style={{ marginBottom: 28 }}>
             <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Player Names</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1778,6 +1730,7 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
     </div>
   );
 }
+
 // ===========================================================================
 // GROUP STAGE SCREEN
 // ===========================================================================
@@ -1890,6 +1843,7 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
     setShowTieModal(false);
   };
 
+  // Advance modal state
   const [showModal, setShowModal] = useState(false);
   const [platePlayers, setPlatePlayers] = useState([]);
   const allPlayers = groups.flat();
@@ -2034,6 +1988,7 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
         </button>
       </div>
 
+      {/* Advance modal */}
       {showModal && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 200, display: "flex", alignItems: "flex-end" }}>
           <div style={{ background: CARD, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: "24px 20px 40px", width: "100%", maxHeight: "85vh", overflowY: "auto", boxSizing: "border-box" }}>
@@ -2102,6 +2057,7 @@ function GroupStageScreen({ groupState, setGroupState, onBack, onAdvanceToBracke
     </div>
   );
 }
+
 // ===========================================================================
 // BRACKET SCREEN
 // ===========================================================================
@@ -2111,12 +2067,14 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
   const allWbRounds = prelimRound ? [prelimRound, ...winnersRounds] : winnersRounds;
   const scale = useViewportScale();
 
+  // Plate management modal state
   const [showPlateModal, setShowPlateModal] = useState(false);
   const [plateInputs, setPlateInputs] = useState(() =>
     plateData ? (plateData.rounds || []).flat().map(id => plateData.matchMap[id]).filter(m => m.p1 && m.p1 !== "BYE").map(m => m.p1) : ["", ""]
   );
 
   const openPlateModal = () => {
+    // Pre-fill from existing plate if any, else start with 2 empty fields
     if (plateData) {
       const existing = Object.values(plateData.matchMap).filter(m => !m.isBye && m.p1 && m.p1 !== "BYE").map(m => [m.p1, m.p2]).flat().filter((v, i, a) => v && v !== "BYE" && a.indexOf(v) === i);
       setPlateInputs(existing.length >= 2 ? existing : ["", ""]);
@@ -2163,10 +2121,9 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
   const [showCloseOut, setShowCloseOut] = useState(false);
   const [editingMatchId, setEditingMatchId] = useState(null);
   const bracketScrollRef = useRef(null);
-  const wbTreeContentRef = useRef(null);
-  const lbTreeContentRef = useRef(null);
-  const plateTreeContentRef = useRef(null);
 
+  // Measure the real rendered height of a match card so the bracket
+  // alignment/connector math lines up pixel-for-pixel, rather than guessing.
   const [cardHeight, setCardHeight] = useState(
     scale.tier === "desktop" ? 172 : scale.tier === "tablet" ? 156 : 144
   );
@@ -2184,13 +2141,16 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
     return () => ro.disconnect();
   }, [scale.tier, useScoring]);
 
+  // On mount, ensure scroll starts at top-left
   useEffect(() => {
     if (bracketScrollRef.current) {
       bracketScrollRef.current.scrollTop = 0;
       bracketScrollRef.current.scrollLeft = 0;
     }
   }, []);
+  // closedBrackets now passed in as a prop from App so it can be persisted/resumed
 
+  // Derive current section from activeTab key prefix
   const activeSection = activeTab.startsWith("wb") ? "wb"
     : activeTab === "gf" ? "gf"
     : activeTab.startsWith("lb") ? "lb"
@@ -2216,6 +2176,10 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
     if (activeSection === "plate") return plateChampionCheck;
     return null;
   })();
+  // "Settled" means this bracket either doesn't apply, or has been explicitly
+  // closed by the user - NOT simply "no champion yet". This is what fixes the
+  // bug where an in-progress WB (no champion yet) was mistaken for a
+  // non-existent one when closing out LB/Plate.
   const lbApplicable = !isSingleElim && losersRounds.length > 0 && !grandFinalEnabled;
   const plateApplicable = !!plateData;
   const wbSettled = !!closedBrackets.wb;
@@ -2226,8 +2190,11 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
     const closingWb = activeSection === "wb" || activeSection === "gf";
     const closingLb = activeSection === "lb";
     const closingPlate = activeSection === "plate";
+    // Closing WB: still have LB or plate unsettled (in progress or awaiting close)?
     if (closingWb) return lbSettled && plateSettled;
+    // Closing LB: still have WB or plate unsettled?
     if (closingLb) return wbSettled && plateSettled;
+    // Closing plate: last only if WB and LB are both already settled
     if (closingPlate) return wbSettled && lbSettled;
     return true;
   })();
@@ -2245,6 +2212,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
 
   const handleCloseOutDismiss = () => {
     setShowCloseOut(false);
+    // Navigate to the next bracket that still needs attention (in progress or awaiting close)
     if (activeSection === "plate") {
       if (!wbSettled) setActiveTab("wb-0");
       else if (!lbSettled) setActiveTab("lb-0");
@@ -2273,100 +2241,68 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
     return i === 0 ? "LB Round 1" : `LB Round ${i + 1}`;
   };
 
-  const plateLabel = (i, pr) => {
-    const isLast = i === pr.length - 1;
-    return isLast ? "Plate Final" : i === pr.length - 2 ? "Semi Final" : i === pr.length - 3 ? "Qtr Final" : `Plate Rd ${i + 1}`;
-  };
-
-  // The bracket is rendered as a real nested DOM tree (see BracketNode) so
-  // the browser's own flexbox layout guarantees correct centering - no
-  // pixel math, no per-round active/collapsed state to track.
+  // WB round-by-round gap/offset layout, driven by whichever WB round is
+  // currently active. GF is NOT part of this array - it's a straight 1:1
+  // feed from the WB final, so its position is derived separately below
+  // (matching the WB final's own offset exactly, not the pair-midpoint math).
   const gutterWidth = scale.tier === "desktop" ? 40 : 28;
-  const cardWidth = scale.cardWidth;
-  // Connector lines are only drawn on desktop (Prelim rounds never get
-  // lines - see the matchIds filtering at each call site below). On
-  // desktop the Losers Bracket also mirrors to read right-to-left, so its
-  // tree, labels, and connector math all flip together.
-  const isDesktop = scale.tier === "desktop";
-  const lbReverse = isDesktop;
+  const wbActiveIndex = activeSection === "wb" ? parseInt(activeTab.split("-")[1], 10) : -1;
+  // A prelim round can make the sequence 1 -> 8 -> 4 -> 2 -> 1 (for
+  // example, a 15-player tournament), rather than a simple binary tree.
+  // Use the same count-aware layout as LB/Plate so the prelim is an entry
+  // feed, not a spacing multiplier for every Winners round that follows.
+  const wbLayout = computeTopologyLayout(allWbRounds, wbActiveIndex, cardHeight);
+  // GF's card must line up with the WB final (single match, 1:1), so it
+  // simply inherits the WB final round's own top offset.
+  const gfOffset = wbLayout.offsets[allWbRounds.length - 1] || 0;
 
-  const wbHasGF = !isSingleElim && grandFinalEnabled;
-  const wbInScopeSet = new Set(allWbRounds.flat());
-  const wbTreeRootId = wbHasGF ? grandFinalId : winnersRounds[winnersRounds.length - 1][0];
-
+  // Plate round-by-round layout (independent bracket, own active state)
   const plateRoundsArr = plateData ? (plateData.rounds || []) : [];
-  const plateInScopeSet = new Set(plateRoundsArr.flat());
-  const plateTreeRootId = plateData ? plateData.finalId : null;
+  const plateActiveIndex = activeSection === "plate" ? parseInt(activeTab.split("-")[1], 10) : -1;
+  const plateLayout = computeTopologyLayout(plateRoundsArr, plateActiveIndex, cardHeight);
 
-  const lbInScopeSet = new Set(losersRounds.flat());
-  const lbTreeRootId = losersRounds.length > 0 ? losersRounds[losersRounds.length - 1][0] : null;
+  // LB round-by-round layout (independent bracket, own active state). LB
+  // round sizes don't always halve cleanly (some rounds merge in WB losers
+  // without eliminating anyone), so connector lines only draw where the
+  // ratio between adjacent rounds is a clean 2:1 or 1:1 - see BracketConnectors.
+  const lbActiveIndex = activeSection === "lb" ? parseInt(activeTab.split("-")[1], 10) : -1;
+  const lbLayout = computeTopologyLayout(losersRounds, lbActiveIndex, cardHeight);
 
-  // If a prelim/bye round means some matches in a round have an extra
-  // generation nested to their left and sibling matches in that same round
-  // don't (e.g. only one WB Round-1 match receives a prelim winner), the
-  // narrower matches render further left than their siblings, throwing
-  // every later round's column alignment off too - not just that one
-  // round. computeReserveTargets detects any such "mixed" rounds and
-  // BracketNode pads the deficit with an invisible same-size spacer.
-  const wbReserveTargets = useMemo(
-    () => computeReserveTargets(allWbRounds, matchMap, wbInScopeSet),
-    [allWbRounds, matchMap, wbInScopeSet]
-  );
-  const lbReserveTargets = useMemo(
-    () => computeReserveTargets(losersRounds, matchMap, lbInScopeSet),
-    [losersRounds, matchMap, lbInScopeSet]
-  );
-  const plateReserveTargets = useMemo(
-    () => computeReserveTargets(plateRoundsArr, plateData ? plateData.matchMap : {}, plateInScopeSet),
-    [plateRoundsArr, plateData, plateInScopeSet]
-  );
-
-  // Scrolls so that a specific match card is flush with the container's
-  // left edge. We measure the card's actual DOM position rather than
-  // computing it from a formula, because WB/Losers/Plate are laid out
-  // side-by-side in one continuous scrollable row - a Losers or Plate
-  // round isn't at a fixed i*(cardWidth+gutter) offset from the left edge,
-  // it's offset by the full width of every section that comes before it.
-  // (Unlike the connector-line measurement, here we DO want the absolute
-  // position within the full scrollable range, so we DO add back
-  // container.scrollLeft - container itself is the fixed viewport frame,
-  // not a scrolling descendant, so this is the correct case for it.)
-  const scrollToMatchId = (matchId) => {
-    const container = bracketScrollRef.current;
-    if (!container || !matchId) return;
-    const el = container.querySelector(`[data-match-id="${matchId}"]`);
-    if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
-
-    // iOS WKWebView sometimes fails to paint tiles that scroll into view
-    // via a JS-triggered scroll (as opposed to a real touch gesture) - the
-    // compositor doesn't always realize new content needs rendering.
-    // Nudging a harmless style change forces a fresh paint. We do this
-    // both right away and again after the smooth-scroll animation would
-    // have finished, to catch content that scrolls in partway through.
-    const nudgeRepaint = () => {
-      if (!container) return;
-      container.style.opacity = "0.999";
-      requestAnimationFrame(() => {
-        if (container) container.style.opacity = "1";
-      });
-    };
-    requestAnimationFrame(nudgeRepaint);
-    setTimeout(nudgeRepaint, 400);
-  };
-
-  const firstIdsForSection = (key) => {
-    if (key === "wb") return allWbRounds[0] || [];
-    if (key === "lb") return losersRounds[0] || [];
-    if (key === "plate") return plateRoundsArr[0] || [];
-    return [];
-  };
-
+  // Pill nav: one button per WB round + GF + LB + Plate
   const roundTabs = [
-    ...allWbRounds.map((ids, i) => ({ key: `wb-${i}`, ids, label: wbLabel(i, allWbRounds.length), color: PURPLE, section: "wb" })),
-    ...(wbHasGF ? [{ key: "gf", ids: [grandFinalId], label: "Grand Final", color: GOLD, section: "gf" }] : []),
-    ...(!isSingleElim && losersRounds.length > 0 ? losersRounds.map((ids, i) => ({ key: `lb-${i}`, ids, label: lbLabel(i), color: BLUE, section: "lb" })) : []),
-    ...(plateData ? plateRoundsArr.map((ids, i) => ({ key: `plate-${i}`, ids, label: plateLabel(i, plateRoundsArr), color: "#FB923C", section: "plate" })) : []),
+    ...allWbRounds.map((_, i) => ({
+      key: `wb-${i}`,
+      colId: `round-col-wb-${i}`,
+      label: wbLabel(i, allWbRounds.length),
+      color: PURPLE,
+      section: "wb",
+    })),
+    ...(!isSingleElim && grandFinalEnabled ? [{
+      key: "gf",
+      colId: "round-col-gf-0",
+      label: "Grand Final",
+      color: GOLD,
+      section: "gf",
+    }] : []),
+    ...(!isSingleElim && losersRounds.length > 0 ? losersRounds.map((_, i) => ({
+      key: `lb-${i}`,
+      colId: `round-col-lb-${i}`,
+      label: lbLabel(i),
+      color: BLUE,
+      section: "lb",
+    })) : []),
+    ...(plateData ? (plateData.rounds || []).map((_, i) => {
+      const pr = plateData.rounds || [];
+      const isLast = i === pr.length - 1;
+      const label = isLast ? "Plate Final" : i === pr.length - 2 ? "Semi Final" : i === pr.length - 3 ? "Qtr Final" : `Plate Rd ${i + 1}`;
+      return {
+        key: `plate-${i}`,
+        colId: `round-col-plate-${i}`,
+        label,
+        color: "#FB923C",
+        section: "plate",
+      };
+    }) : []),
   ];
 
   return (
@@ -2402,19 +2338,28 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
             </button>
           )}
         </div>
+        {/* Section pills: Winners / Losers / Plate */}
         <div style={{ display: "flex", gap: 8, marginTop: 12, marginBottom: 8 }}>
           {[
-            { key: "wb", label: isSingleElim ? "Bracket" : "Winners", color: PURPLE },
-            ...(!isSingleElim && losersRounds.length > 0 ? [{ key: "lb", label: "Losers", color: BLUE }] : []),
-            ...(plateData ? [{ key: "plate", label: "Plate", color: "#FB923C" }] : []),
-          ].map(({ key, label, color }) => {
+            { key: "wb", label: isSingleElim ? "Bracket" : "Winners", color: PURPLE, colId: "round-col-wb-0" },
+            ...(!isSingleElim && losersRounds.length > 0 ? [{ key: "lb", label: "Losers", color: BLUE, colId: "round-col-lb-0" }] : []),
+            ...(plateData ? [{ key: "plate", label: "Plate", color: "#FB923C", colId: "round-col-plate-0" }] : []),
+          ].map(({ key, label, color, colId }) => {
             const isActive = activeSection === key;
             return (
               <button key={key} onClick={() => {
-                const newTab = key === "lb" ? "lb-0" : key === "plate" ? "plate-0" : "wb-0";
-                setActiveTab(newTab);
-                const ids = firstIdsForSection(key);
-                setTimeout(() => scrollToMatchId(ids[0]), 30);
+                setActiveTab(key === "lb" ? "lb-0" : key === "plate" ? "plate-0" : "wb-0");
+                setTimeout(() => {
+                  const col = document.getElementById(colId);
+                  const container = bracketScrollRef.current;
+                  if (col && container) {
+                    const colLeft = col.getBoundingClientRect().left;
+                    const containerLeft = container.getBoundingClientRect().left;
+                    const target = container.scrollLeft + colLeft - containerLeft - 16;
+                    container.scrollTo({ left: target, top: 0, behavior: "smooth" });
+                    window.scrollTo({ top: container.getBoundingClientRect().top + window.scrollY - 100, behavior: "smooth" });
+                  }
+                }, 30);
               }} style={{
                 padding: "8px 18px",
                 background: isActive ? color : CARD,
@@ -2429,13 +2374,24 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
           })}
         </div>
 
+        {/* Round pills for current section */}
         <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
-          {roundTabs.filter(t => t.section === activeSection || (activeSection === "wb" && t.section === "gf")).map(({ key, ids, label, color }) => {
+          {roundTabs.filter(t => t.section === activeSection || (activeSection === "wb" && t.section === "gf")).map(({ key, colId, label, color }) => {
             const isActive = activeTab === key;
             return (
               <button key={key} onClick={() => {
                 setActiveTab(key);
-                setTimeout(() => scrollToMatchId(ids[0]), 30);
+                setTimeout(() => {
+                  const col = document.getElementById(colId);
+                  const container = bracketScrollRef.current;
+                  if (col && container) {
+                    const colLeft = col.getBoundingClientRect().left;
+                    const containerLeft = container.getBoundingClientRect().left;
+                    const target = container.scrollLeft + colLeft - containerLeft - 16;
+                    container.scrollTo({ left: target, top: 0, behavior: "smooth" });
+                    window.scrollTo({ top: container.getBoundingClientRect().top + window.scrollY - 100, behavior: "smooth" });
+                  }
+                }, 30);
               }} style={{
                 flex: "0 0 auto", padding: "6px 14px",
                 background: isActive ? TEXT : "transparent",
@@ -2451,6 +2407,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
         </div>
       </div>
 
+      {/* Plate management modal */}
       {showPlateModal && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 200, display: "flex", alignItems: "flex-end" }}>
           <div style={{ background: CARD, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: "24px 20px 40px", width: "100%", maxHeight: "85vh", overflowY: "auto", boxSizing: "border-box" }}>
@@ -2482,106 +2439,181 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
         </div>
       )}
 
-      <div ref={bracketScrollRef} style={{ overflowX: "auto", overflowY: "auto", padding: "24px 0 140px", transform: "translateZ(0)", WebkitTransform: "translateZ(0)", WebkitBackfaceVisibility: "hidden" }}>
+      {/* All rounds in ONE continuous horizontal scroll.
+          Tab nav scrolls to the relevant column via id anchors.
+          WB, LB, Plate are all visible - separated by dividers. */}
+      <div ref={bracketScrollRef} style={{ overflowX: "auto", overflowY: "auto", padding: "24px 0 140px", WebkitOverflowScrolling: "touch" }}>
         <div style={{ display: "inline-flex", gap: 0, alignItems: "flex-start", padding: "0 16px", minWidth: "max-content" }}>
 
-          {/* Winners bracket (+ Grand Final folded in as the tree's root when enabled) */}
-          <div style={{ display: "flex", flexDirection: "column", flexShrink: 0, paddingRight: scale.tier === "desktop" ? 40 : 28 }}>
-            <RoundLabelsRow
-              count={allWbRounds.length} labelFn={(i) => wbLabel(i, allWbRounds.length)}
-              color={PURPLE} cardWidth={cardWidth} gutter={gutterWidth}
-              extraLabel={wbHasGF ? "Grand Final" : null} extraColor={GOLD}
-            />
-            <div ref={wbTreeContentRef} style={{ display: "flex", flexDirection: "row", alignItems: "center", position: "relative" }}>
-              {isDesktop && (
-                <BracketConnectorsOverlay
-                  containerRef={bracketScrollRef} contentRef={wbTreeContentRef} matchMap={matchMap}
-                  matchIds={(wbHasGF ? [...allWbRounds.flat(), grandFinalId] : allWbRounds.flat()).filter(id => !matchMap[id].isPrelim)}
-                  color={PURPLE}
-                />
-              )}
-              <BracketNode
-                matchId={wbTreeRootId} matchMap={matchMap} inScopeSet={wbInScopeSet}
-                isLosers={false} grandFinalId={wbHasGF ? grandFinalId : null}
-                onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
-                useScoring={useScoring} scale={scale}
-                editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.wb}
-                gutter={gutterWidth} reserveTarget={wbReserveTargets} spacerHeight={cardHeight}
-              />
-              {champion && (
-                <div style={{ marginLeft: 20, padding: 16, background: `${GOLD}14`, border: `1px solid ${GOLD}55`, borderRadius: 12, textAlign: "center", minWidth: 160, flexShrink: 0 }}>
-                  <div style={{ fontSize: 11, fontFamily: MONO, color: GOLD, letterSpacing: "0.1em", marginBottom: 6 }}>CHAMPION</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: GOLD }}>{champion}</div>
+          {/* Winners Bracket / Single-elim rounds */}
+          {allWbRounds.map((round, i) => {
+            const isActive = activeTab === `wb-${i}`;
+            const isLastWbRound = i === allWbRounds.length - 1;
+            const nextCount = isLastWbRound
+              ? (!isSingleElim && grandFinalEnabled ? 1 : 0)
+              : allWbRounds[i + 1].length;
+            return (
+              <Fragment key={`wb-frag-${i}`}>
+                <div id={`round-col-wb-${i}`} style={{ flexShrink: 0, paddingRight: nextCount > 0 ? 0 : (scale.tier === "desktop" ? 40 : 28) }}>
+                  <RoundCol
+                    title={wbLabel(i, allWbRounds.length)}
+                    matchIds={round} matchMap={matchMap}
+                    onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
+                    isLosers={false} useScoring={useScoring} scale={scale}
+                    editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.wb}
+                    isActive={isActive}
+                    spacing={wbLayout.gaps[i]}
+                    offset={wbLayout.offsets[i]}
+                  />
                 </div>
-              )}
-            </div>
-          </div>
+                {nextCount > 0 && (
+                  <div style={{ flexShrink: 0, width: gutterWidth, paddingTop: BRACKET_TITLE_BLOCK_HEIGHT }}>
+                    <BracketConnectors
+                      feederRound={round} targetRound={isLastWbRound ? [grandFinalId] : allWbRounds[i + 1]}
+                      matchMap={matchMap}
+                      feederOffset={wbLayout.offsets[i]} feederGap={wbLayout.gaps[i]}
+                      targetOffset={isLastWbRound ? gfOffset : wbLayout.offsets[i + 1]}
+                      targetGap={isLastWbRound ? 0 : wbLayout.gaps[i + 1]}
+                      cardHeight={cardHeight} gutterWidth={gutterWidth} color={isLastWbRound ? GOLD : PURPLE}
+                      hide={!!prelimRound && i === 0}
+                    />
+                  </div>
+                )}
+              </Fragment>
+            );
+          })}
 
-          {/* Losers bracket */}
+          {/* Grand Final column (double-elim only) */}
+          {!isSingleElim && grandFinalEnabled && (
+            <div id="round-col-gf-0" style={{ flexShrink: 0, paddingRight: scale.tier === "desktop" ? 40 : 28 }}>
+              <div style={{ fontSize: 11, color: GOLD, letterSpacing: "0.08em", fontWeight: 700, marginBottom: 12, textTransform: "uppercase" }}>Grand Final</div>
+              <div style={{ paddingTop: gfOffset, transition: "padding-top 0.35s cubic-bezier(0.4, 0, 0.2, 1)" }}>
+                <div data-bracket-card="true">
+                  <MatchCard matchId={grandFinalId} matchMap={matchMap}
+                    onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
+                    isLosers={false} isGrandFinal={true} useScoring={useScoring} scale={scale}
+                    editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.wb} />
+                </div>
+                {champion && (
+                  <div style={{ marginTop: 20, padding: 16, background: `${GOLD}14`, border: `1px solid ${GOLD}55`, borderRadius: 12, textAlign: "center" }}>
+                    <div style={{ fontSize: 11, fontFamily: MONO, color: GOLD, letterSpacing: "0.1em", marginBottom: 6 }}>CHAMPION</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: GOLD }}>{champion}</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Single-elim champion card */}
+          {isSingleElim && champion && (
+            <div style={{ flexShrink: 0, paddingRight: scale.tier === "desktop" ? 40 : 28, paddingTop: 24 }}>
+              <div style={{ padding: 20, background: `${GOLD}14`, border: `1px solid ${GOLD}55`, borderRadius: 12, textAlign: "center", minWidth: 180 }}>
+                <div style={{ fontSize: 11, fontFamily: MONO, color: GOLD, letterSpacing: "0.1em", marginBottom: 8 }}>CHAMPION</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: GOLD }}>{champion}</div>
+              </div>
+            </div>
+          )}
+
+          {/* No-GF double-elim champion */}
+          {!grandFinalEnabled && !isSingleElim && champion && (
+            <div style={{ flexShrink: 0, paddingRight: scale.tier === "desktop" ? 40 : 28, paddingTop: 24 }}>
+              <div style={{ padding: 20, background: `${GOLD}14`, border: `1px solid ${GOLD}55`, borderRadius: 12, textAlign: "center", minWidth: 180 }}>
+                <div style={{ fontSize: 11, fontFamily: MONO, color: GOLD, letterSpacing: "0.1em", marginBottom: 8 }}>CHAMPION</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: GOLD }}>{champion}</div>
+              </div>
+            </div>
+          )}
+
+          {/* Losers Bracket (double-elim only) - separated by a divider */}
           {!isSingleElim && losersRounds.length > 0 && (
             <>
               <div style={{ flexShrink: 0, width: 2, alignSelf: "stretch", background: BORDER, marginRight: scale.tier === "desktop" ? 40 : 28 }} />
-              <div style={{ display: "flex", flexDirection: "column", flexShrink: 0, paddingRight: scale.tier === "desktop" ? 40 : 28 }}>
-                <RoundLabelsRow
-                  count={losersRounds.length} labelFn={(i) => lbLabel(i)}
-                  color={BLUE} cardWidth={cardWidth} gutter={gutterWidth}
-                  reverse={lbReverse}
-                />
-                <div ref={lbTreeContentRef} style={{ display: "flex", flexDirection: "row", alignItems: "center", position: "relative" }}>
-                  {isDesktop && (
-                    <BracketConnectorsOverlay
-                      containerRef={bracketScrollRef} contentRef={lbTreeContentRef} matchMap={matchMap}
-                      matchIds={losersRounds.flat().filter(id => !matchMap[id].isLBPrelim)}
-                      color={BLUE} reverse={lbReverse}
-                    />
-                  )}
-                  <BracketNode
-                    matchId={lbTreeRootId} matchMap={matchMap} inScopeSet={lbInScopeSet}
-                    isLosers={true} grandFinalId={null}
-                    onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
-                    useScoring={useScoring} scale={scale}
-                    editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.lb}
-                    gutter={gutterWidth} reserveTarget={lbReserveTargets} spacerHeight={cardHeight}
-                    reverse={lbReverse}
-                  />
-                </div>
-              </div>
+              {losersRounds.map((round, i) => {
+                const isActive = activeTab === `lb-${i}`;
+                const isLastLbRound = i === losersRounds.length - 1;
+                const nextCount = isLastLbRound ? 0 : losersRounds[i + 1].length;
+                return (
+                  <Fragment key={`lb-frag-${i}`}>
+                    <div id={`round-col-lb-${i}`} style={{ flexShrink: 0, paddingRight: nextCount > 0 ? 0 : (scale.tier === "desktop" ? 40 : 28) }}>
+                      <RoundCol
+                        title={lbLabel(i)} matchIds={round} matchMap={matchMap}
+                        onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore}
+                        isLosers={true} useScoring={useScoring} scale={scale}
+                        editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.lb}
+                        isActive={isActive}
+                        spacing={lbLayout.gaps[i]}
+                        offset={lbLayout.offsets[i]}
+                      />
+                    </div>
+                    {nextCount > 0 && (
+                      <div style={{ flexShrink: 0, width: gutterWidth, paddingTop: BRACKET_TITLE_BLOCK_HEIGHT }}>
+                        <BracketConnectors
+                          feederRound={round} targetRound={losersRounds[i + 1]}
+                          matchMap={matchMap}
+                          feederOffset={lbLayout.offsets[i]} feederGap={lbLayout.gaps[i]}
+                          targetOffset={lbLayout.offsets[i + 1]} targetGap={lbLayout.gaps[i + 1]}
+                          cardHeight={cardHeight} gutterWidth={gutterWidth} color={BLUE}
+                          hide={round.some(id => matchMap[id] && matchMap[id].isLBPrelim)}
+                        />
+                      </div>
+                    )}
+                  </Fragment>
+                );
+              })}
             </>
           )}
 
-          {/* Plate bracket */}
+          {/* Plate bracket - separated by a divider */}
           {plateData && (() => {
-            const plateChampion = plateData.matchMap[plateData.finalId] && plateData.matchMap[plateData.finalId].winner;
+            const pm = plateData.matchMap;
+            const pr = plateData.rounds || [];
+            const plateChampion = pm[plateData.finalId] && pm[plateData.finalId].winner;
             return (
               <>
                 <div style={{ flexShrink: 0, width: 2, alignSelf: "stretch", background: BORDER, marginRight: scale.tier === "desktop" ? 40 : 28 }} />
-                <div style={{ display: "flex", flexDirection: "column", flexShrink: 0 }}>
-                  <RoundLabelsRow
-                    count={plateRoundsArr.length} labelFn={(i) => plateLabel(i, plateRoundsArr)}
-                    color={ORANGE} cardWidth={cardWidth} gutter={gutterWidth}
-                  />
-                  <div ref={plateTreeContentRef} style={{ display: "flex", flexDirection: "row", alignItems: "center", position: "relative" }}>
-                    {isDesktop && (
-                      <BracketConnectorsOverlay containerRef={bracketScrollRef} contentRef={plateTreeContentRef} matchMap={plateData.matchMap} matchIds={plateRoundsArr.flat()} color={ORANGE} />
-                    )}
-                    <BracketNode
-                      matchId={plateTreeRootId} matchMap={plateData.matchMap} inScopeSet={plateInScopeSet}
-                      isLosers={false} grandFinalId={null}
-                      onPickWinner={(id, w) => setPlateMatchMap(prev => recordWinner(prev, id, w))}
-                      onChangeWinner={(id, w) => setPlateMatchMap(prev => changeWinner(prev, id, w))}
-                      onScore={(id, who, d) => setPlateMatchMap(prev => applyScoreChange(prev, id, who, d))}
-                      useScoring={useScoring} scale={scale}
-                      editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.plate}
-                      gutter={gutterWidth} reserveTarget={plateReserveTargets} spacerHeight={cardHeight}
-                    />
-                    {plateChampion && (
-                      <div style={{ marginLeft: 20, padding: 16, background: `${ORANGE}14`, border: `1px solid ${ORANGE}55`, borderRadius: 12, textAlign: "center", minWidth: 160, flexShrink: 0 }}>
-                        <div style={{ fontSize: 11, fontFamily: MONO, color: ORANGE, letterSpacing: "0.1em", marginBottom: 6 }}>PLATE CHAMPION</div>
-                        <div style={{ fontSize: 18, fontWeight: 700, color: ORANGE }}>{plateChampion}</div>
+                {pr.map((round, i) => {
+                  const isLast = i === pr.length - 1;
+                  const lbl = isLast ? "Plate Final" : i === pr.length - 2 ? "Semi Final" : i === pr.length - 3 ? "Qtr Final" : `Plate Rd ${i + 1}`;
+                  const isActive = activeTab === `plate-${i}`;
+                  const nextCount = isLast ? 0 : pr[i + 1].length;
+                  return (
+                    <Fragment key={`plate-frag-${i}`}>
+                      <div id={`round-col-plate-${i}`} style={{ flexShrink: 0, paddingRight: nextCount > 0 ? 0 : (scale.tier === "desktop" ? 40 : 28) }}>
+                        <RoundCol
+                          title={lbl} matchIds={round} matchMap={pm}
+                          onPickWinner={(id, w) => setPlateMatchMap(prev => recordWinner(prev, id, w))}
+                          onChangeWinner={(id, w) => setPlateMatchMap(prev => changeWinner(prev, id, w))}
+                          onScore={(id, who, d) => setPlateMatchMap(prev => applyScoreChange(prev, id, who, d))}
+                          isLosers={false} useScoring={useScoring} scale={scale}
+                          editingMatchId={editingMatchId} setEditingMatchId={setEditingMatchId} readOnly={closedBrackets.plate}
+                          isActive={isActive}
+                          spacing={plateLayout.gaps[i]}
+                          offset={plateLayout.offsets[i]}
+                        />
                       </div>
-                    )}
+                      {nextCount > 0 && (
+                        <div style={{ flexShrink: 0, width: gutterWidth, paddingTop: BRACKET_TITLE_BLOCK_HEIGHT }}>
+                          <BracketConnectors
+                            feederRound={round} targetRound={pr[i + 1]}
+                            matchMap={pm}
+                            feederOffset={plateLayout.offsets[i]} feederGap={plateLayout.gaps[i]}
+                            targetOffset={plateLayout.offsets[i + 1]} targetGap={plateLayout.gaps[i + 1]}
+                            cardHeight={cardHeight} gutterWidth={gutterWidth} color={ORANGE}
+                          />
+                        </div>
+                      )}
+                    </Fragment>
+                  );
+                })}
+                {plateChampion && (
+                  <div style={{ flexShrink: 0, paddingTop: 24 }}>
+                    <div style={{ fontSize: 11, color: "#FB923C", letterSpacing: "0.08em", fontWeight: 700, marginBottom: 12, textTransform: "uppercase" }}>Plate Winner</div>
+                    <div style={{ padding: 20, background: "#FB923C14", border: "1px solid #FB923C55", borderRadius: 12, textAlign: "center", minWidth: 180 }}>
+                      <div style={{ fontSize: 11, fontFamily: MONO, color: "#FB923C", letterSpacing: "0.1em", marginBottom: 8 }}>PLATE CHAMPION</div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: "#FB923C" }}>{plateChampion}</div>
+                    </div>
                   </div>
-                </div>
+                )}
               </>
             );
           })()}
@@ -2589,7 +2621,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
         </div>
       </div>
 
-
+      {/* Next up bar */}
       {activeSection !== "gf" && (() => {
         let ids = [], color = PURPLE, map = matchMap;
         if (activeSection === "wb") { ids = winnersRounds.flat(); color = PURPLE; }
@@ -2611,21 +2643,25 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
         );
       })()}
 
+      {/* When a Grand Final exists, LB doesn't get its own close-out ceremony -
+          it just feeds into GF. Once LB is done, offer a simple way to jump
+          to whichever of WB / Grand Final still needs attention. */}
       {activeSection === "lb" && grandFinalEnabled && lbComplete && !showCloseOut && (
         <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: `linear-gradient(to top, ${BG} 70%, ${BG}00)`, padding: "20px 16px 16px", display: "flex", gap: 10 }}>
           {!wbSettled && (
-            <button onClick={() => { setActiveTab("wb-0"); setTimeout(() => scrollToMatchId((allWbRounds[0] || [])[0]), 30); }}
+            <button onClick={() => setActiveTab("wb-0")}
               style={{ flex: 1, padding: "16px", background: `${GOLD}18`, border: `1px solid ${GOLD}`, borderRadius: 14, color: GOLD, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
               {wbInProgress ? "Continue to Winners Bracket" : "Go to Winners Bracket"}
             </button>
           )}
-          <button onClick={() => { setActiveTab("gf"); setTimeout(() => scrollToMatchId(grandFinalId), 30); }}
+          <button onClick={() => setActiveTab("gf")}
             style={{ flex: 1, padding: "16px", background: GOLD, border: "none", borderRadius: 14, color: "#0D0F14", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
             Go to Grand Final
           </button>
         </div>
       )}
 
+      {/* Close out button - show for current tab's bracket when it has a champion and isn't already closed */}
       {currentTabChampion && !currentTabClosed && !showCloseOut && !(activeSection === "lb" && grandFinalEnabled) && (
         <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: `linear-gradient(to top, ${BG} 70%, ${BG}00)`, padding: "20px 16px 16px" }}>
           <button
@@ -2637,6 +2673,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
         </div>
       )}
 
+      {/* Close-out overlay */}
       {showCloseOut && (
         <div style={{ position: "fixed", inset: 0, background: "#0F172A", zIndex: 300, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "32px 24px" }}>
           <div style={{ position: "absolute", inset: 0, background: `radial-gradient(ellipse at 50% 30%, ${activeSection === "plate" ? "#FB923C18" : activeSection === "lb" ? BLUE + "18" : GOLD + "18"} 0%, transparent 70%)`, pointerEvents: "none" }} />
@@ -2658,20 +2695,23 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                 </button>
               ) : (
                 <>
+                  {/* Navigate to LB if it isn't settled yet (still running or awaiting close) */}
                   {!lbSettled && activeSection !== "lb" && (
-                    <button onClick={() => { setShowCloseOut(false); setActiveTab("lb-0"); setTimeout(() => scrollToMatchId((losersRounds[0] || [])[0]), 30); }}
+                    <button onClick={() => { setShowCloseOut(false); setActiveTab("lb-0"); }}
                       style={{ width: "100%", padding: "14px", background: `${BLUE}18`, border: `1px solid ${BLUE}`, borderRadius: 12, color: BLUE, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                       {lbInProgress ? "Continue to Losers Bracket" : "Close Out Losers Bracket"}
                     </button>
                   )}
+                  {/* Navigate to plate if it isn't settled yet */}
                   {!plateSettled && activeSection !== "plate" && (
-                    <button onClick={() => { setShowCloseOut(false); setActiveTab("plate-0"); setTimeout(() => scrollToMatchId((plateRoundsArr[0] || [])[0]), 30); }}
+                    <button onClick={() => { setShowCloseOut(false); setActiveTab("plate-0"); }}
                       style={{ width: "100%", padding: "14px", background: `${ORANGE}18`, border: `1px solid ${ORANGE}`, borderRadius: 12, color: ORANGE, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                       {plateInProgress ? "Continue to Plate" : "Close Out Plate"}
                     </button>
                   )}
+                  {/* Navigate back to main WB if it isn't settled yet - whether still being played or finished-but-unclosed */}
                   {!wbSettled && activeSection !== "wb" && activeSection !== "gf" && (
-                    <button onClick={() => { setShowCloseOut(false); setActiveTab("wb-0"); setTimeout(() => scrollToMatchId((allWbRounds[0] || [])[0]), 30); }}
+                    <button onClick={() => { setShowCloseOut(false); setActiveTab("wb-0"); }}
                       style={{ width: "100%", padding: "14px", background: `${GOLD}18`, border: `1px solid ${GOLD}`, borderRadius: 12, color: GOLD, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                       {wbInProgress ? "Continue to Main Bracket" : "Close Out Main Tournament"}
                     </button>
@@ -2689,6 +2729,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
     </div>
   );
 }
+
 // ===========================================================================
 // APP
 // ===========================================================================
@@ -2735,6 +2776,7 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState("idle");
   const [saveError, setSaveError] = useState(null);
 
+  // -- Load on mount ------------------------------------------------------
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -2750,13 +2792,18 @@ export default function App() {
     }
   }, []);
 
+  // -- Keep ref current ---------------------------------------------------
   useEffect(() => {
     latestStateRef.current = { screen, players, grandFinal, useScoring, bestOf, tournamentName, isSingleElim, plateEnabled, bracketData, plateData, groupState, closedBrackets };
   }, [screen, players, grandFinal, useScoring, bestOf, tournamentName, isSingleElim, bracketData, plateData, groupState, closedBrackets]);
 
+  // -- Save ---------------------------------------------------------------
   const flushSave = useCallback(() => {
     const s = latestStateRef.current;
     if (!s || s.screen === "loading" || s.screen === "setup" || s.screen === "history") return;
+    // Ensure a stable tournament id exists as soon as we're on an active
+    // bracket, so it can be persisted and correctly restored on Resume
+    // (prevents duplicate history entries from a regenerated id).
     if (s.screen === "bracket" && s.bracketData && !tournamentIdRef.current) {
       tournamentIdRef.current = `t_${Date.now()}`;
     }
@@ -2784,6 +2831,7 @@ export default function App() {
       setSaveError(e && e.message ? e.message : String(e));
     }
 
+    // Auto-save to history when champion exists
     if (s.screen === "bracket" && s.bracketData) {
       const { matchMap, winnersRounds, losersRounds, grandFinalId } = s.bracketData;
       const summary = summariseBracket(matchMap, s.players, s.grandFinal, winnersRounds, losersRounds, grandFinalId);
@@ -2792,6 +2840,7 @@ export default function App() {
           standings: computeStandings(g, s.groupState.matchesByGroup[i] || []),
           advance: s.groupState.advancePerGroup,
         })) : null;
+        // Get LB champion if double-elim
         const lb = s.bracketData.losersRounds || [];
         const lbWinner = !s.isSingleElim && lb.length > 0
           ? (s.bracketData.matchMap[lb[lb.length - 1][0]] && s.bracketData.matchMap[lb[lb.length - 1][0]].winner)
@@ -2814,6 +2863,7 @@ export default function App() {
       }
     }
 
+    // Auto-save plate to history as a separate entry when plate has a champion
     if (s.screen === "bracket" && s.plateData) {
       const plateChamp = s.plateData.matchMap[s.plateData.finalId] && s.plateData.matchMap[s.plateData.finalId].winner;
       if (plateChamp) {
@@ -2859,6 +2909,7 @@ export default function App() {
     return () => { document.removeEventListener("visibilitychange", onHide); window.removeEventListener("pagehide", onHide); };
   }, [flushSave]);
 
+  // -- Setters ------------------------------------------------------------
   const setGroupState = useCallback((updater) => {
     setGroupStateRaw(prev => typeof updater === "function" ? updater(prev) : updater);
   }, []);
@@ -2877,7 +2928,8 @@ export default function App() {
     });
   }, []);
 
-  const [plateEnabled, setPlateEnabled] = useState(false);
+  // -- Generate handlers --------------------------------------------------
+  const [plateEnabled, setPlateEnabled] = useState(false); // whether plate is enabled for current tournament
 
   const handleGenerateBracket = (names, gf, scoring, bo, name, elimType, platEn) => {
     tournamentIdRef.current = `t_${Date.now()}`;
@@ -2894,7 +2946,7 @@ export default function App() {
     setIsSingleElim(single);
     setPlateEnabled(!!platEn);
     setBracketData(data);
-    setPlateData(null);
+    setPlateData(null); // plate built later from bracket screen
     setGroupStateRaw(null);
     setScreen("bracket");
   };
@@ -2926,7 +2978,7 @@ export default function App() {
     setIsSingleElim(true);
     setPlateEnabled(!!platEn);
     setBracketData(wb);
-    setPlateData(null);
+    setPlateData(null); // plate built later from bracket screen
     setScreen("bracket");
   };
 
@@ -2943,6 +2995,8 @@ export default function App() {
     setPlateData(savedSnapshot.plateData || null);
     setGroupStateRaw(savedSnapshot.groupState || null);
     setClosedBrackets(savedSnapshot.closedBrackets || {});
+    // Restore the original tournament id so re-closing a bracket updates the
+    // existing history entry instead of creating a duplicate.
     tournamentIdRef.current = savedSnapshot.tournamentId || null;
     const s = savedSnapshot.screen;
     setScreen(s && s !== "setup" && s !== "loading" ? s : "setup");
@@ -2955,6 +3009,7 @@ export default function App() {
 
   const handleBackToSetup = () => setScreen("setup");
 
+  // -- Render -------------------------------------------------------------
   if (screen === "loading") {
     return <div style={{ minHeight: "100vh", background: BG, color: MUTED, fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15 }}>Loading...</div>;
   }
@@ -3013,6 +3068,9 @@ export default function App() {
         closedBrackets={closedBrackets}
         setClosedBrackets={setClosedBrackets}
         onAllBracketsClosed={() => {
+          // Tournament is fully wrapped up - clear the saved snapshot so it
+          // can no longer be resumed. Cancel any pending debounced save first
+          // so it can't write the snapshot back after we clear it.
           if (saveTimer.current) clearTimeout(saveTimer.current);
           try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
           setSavedSnapshot(null);
