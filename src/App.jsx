@@ -991,12 +991,6 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, o
   const matchLabel = isGrandFinal ? "FINAL" : `M ${m.matchNum}`;
   const labelRailWidth = s.tier === "desktop" ? 58 : 50;
 
-  // editing state is lifted to parent so it survives tab switches
-  const editing = editingMatchId === matchId;
-  const setEditing = (v) => setEditingMatchId && setEditingMatchId(v ? matchId : null);
-
-  const [hovered, setHovered] = useState(false);
-
   return (
     <div
       style={{
@@ -1011,8 +1005,6 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, o
         overflow: "hidden",
         position: "relative",
       }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
     >
       {/* FIFA-style match label rail: it no longer consumes vertical space,
           so the visual/card centre is the centre of the two player rows. */}
@@ -1029,45 +1021,29 @@ function MatchCard({ matchId, matchMap, onPickWinner, onChangeWinner, onScore, o
       {(ready && !useScoring) && (
         <div style={{ position: "absolute", top: 7, right: 9, zIndex: 1, color: MUTED, fontSize: 10, fontFamily: MONO, letterSpacing: "0.06em", pointerEvents: "none" }}>TAP</div>
       )}
-      {settled && !editing && !readOnly && (
+      {settled && !readOnly && onResetMatch && (
         <span
-          onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-          style={{ position: "absolute", top: 7, right: 9, zIndex: 1, fontSize: 10, color: GREEN, cursor: "pointer", opacity: hovered ? 1 : 0.7, fontFamily: MONO }}
-          title="Tap to change winner"
-        >{hovered ? "EDIT" : "v"}</span>
+          onClick={(e) => { e.stopPropagation(); onResetMatch(matchId); }}
+          style={{ position: "absolute", top: 7, right: 9, zIndex: 1, fontSize: 10, color: RED, cursor: "pointer", fontWeight: 700, fontFamily: MONO }}
+          title="Clear this match's result"
+        >RESET</span>
       )}
-      {settled && !editing && readOnly && (
+      {settled && (readOnly || !onResetMatch) && (
         <span style={{ position: "absolute", top: 7, right: 9, zIndex: 1, fontSize: 10, color: GREEN, fontFamily: MONO }}>v</span>
-      )}
-      {settled && editing && (
-        <div style={{ position: "absolute", top: 7, right: 9, zIndex: 1, display: "flex", alignItems: "center", gap: 10 }}>
-          {onResetMatch && (
-            <span
-              onClick={(e) => { e.stopPropagation(); onResetMatch(matchId); setEditing(false); }}
-              style={{ fontSize: 10, color: RED, cursor: "pointer", fontWeight: 700, fontFamily: MONO }}
-              title="Clear this match's result entirely"
-            >RESET</span>
-          )}
-          <span
-            onClick={(e) => { e.stopPropagation(); setEditing(false); }}
-            style={{ fontSize: 10, color: MUTED, cursor: "pointer", fontWeight: 700, fontFamily: MONO }}
-          >CANCEL</span>
-        </div>
       )}
 
       {players.map(({ player, slot }, i) => {
         const fromLabel = !player ? slotLabel(matchMap, matchId, slot) : null;
         const isWinner  = settled && m.winner === player;
         const isLoserP  = settled && m.loser === player;
-        const canTap    = !readOnly && (ready || (settled && editing)) && !!player && player !== "BYE";
+        const canTap    = !readOnly && ready && !!player && player !== "BYE";
 
         return (
           <div
             key={slot}
             onClick={() => {
               if (!canTap) return;
-              if (settled && editing) { onChangeWinner(matchId, player); setEditing(false); }
-              else if (ready && !useScoring) onPickWinner(matchId, player);
+              if (ready && !useScoring) onPickWinner(matchId, player);
             }}
             style={{
               padding: s.tier === "desktop" ? "12px 14px 11px" : s.tier === "tablet" ? "10px 12px 9px" : "9px 10px 8px",
@@ -1524,37 +1500,6 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
 
         <div style={{ padding: "24px 20px 0" }}>
 
-          {/* Scoring */}
-          <div style={{ marginBottom: 20 }}>
-            <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Scoring</div>
-            <div onClick={() => setUseScoring(v => !v)} style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              background: CARD2, border: `1px solid ${useScoring ? GOLD + "66" : BORDER}`,
-              borderRadius: 12, padding: "12px 14px", cursor: "pointer", marginBottom: 12,
-            }}>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>Track game scores</div>
-                <div style={{ fontSize: 12, color: MUTED, marginTop: 3 }}>{useScoring ? "Tap +/- to enter scores" : "Just tap the winner"}</div>
-              </div>
-              <div style={{ width: 44, height: 26, borderRadius: 13, background: useScoring ? GOLD : BORDER, position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
-                <div style={{ position: "absolute", top: 4, left: useScoring ? 22 : 4, width: 18, height: 18, borderRadius: 9, background: "#fff", transition: "left 0.2s" }} />
-              </div>
-            </div>
-            {useScoring && (
-              <div style={{ display: "flex", gap: 8 }}>
-                {[3, 5, 7].map(v => (
-                  <button key={v} onClick={() => setBestOf(v)} style={{
-                    flex: 1, padding: "10px 0", borderRadius: 10,
-                    border: `1px solid ${bestOf === v ? GOLD : BORDER}`,
-                    background: bestOf === v ? `${GOLD}22` : CARD2,
-                    color: bestOf === v ? GOLD : MUTED,
-                    fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit",
-                  }}>Best of {v}</button>
-                ))}
-              </div>
-            )}
-          </div>
-
           {/* Elim format - knockout-only mode */}
           {mode === "bracket" && (
             <div style={{ marginBottom: 20 }}>
@@ -1587,6 +1532,37 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
               )}
             </div>
           )}
+
+          {/* Scoring */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 11, fontFamily: FONT, fontWeight: 600, color: MUTED, letterSpacing: "0.06em", marginBottom: 12, textTransform: "uppercase" }}>Scoring</div>
+            <div onClick={() => setUseScoring(v => !v)} style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              background: CARD2, border: `1px solid ${useScoring ? GOLD + "66" : BORDER}`,
+              borderRadius: 12, padding: "12px 14px", cursor: "pointer", marginBottom: 12,
+            }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>Track game scores</div>
+                <div style={{ fontSize: 12, color: MUTED, marginTop: 3 }}>{useScoring ? "Tap +/- to enter scores" : "Just tap the winner"}</div>
+              </div>
+              <div style={{ width: 44, height: 26, borderRadius: 13, background: useScoring ? GOLD : BORDER, position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
+                <div style={{ position: "absolute", top: 4, left: useScoring ? 22 : 4, width: 18, height: 18, borderRadius: 9, background: "#fff", transition: "left 0.2s" }} />
+              </div>
+            </div>
+            {useScoring && (
+              <div style={{ display: "flex", gap: 8 }}>
+                {[3, 5, 7].map(v => (
+                  <button key={v} onClick={() => setBestOf(v)} style={{
+                    flex: 1, padding: "10px 0", borderRadius: 10,
+                    border: `1px solid ${bestOf === v ? GOLD : BORDER}`,
+                    background: bestOf === v ? `${GOLD}22` : CARD2,
+                    color: bestOf === v ? GOLD : MUTED,
+                    fontWeight: 700, fontSize: 15, cursor: "pointer", fontFamily: "inherit",
+                  }}>Best of {v}</button>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Plate tournament */}
           <div style={{ marginBottom: 24 }}>
@@ -2187,12 +2163,24 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
     return () => ro.disconnect();
   }, [scale.tier, useScoring]);
 
-  // On mount, ensure scroll starts at top-left
+  // On mount, ensure scroll starts at top-left. Resetting only the internal
+  // horizontal scroller isn't enough - if the Setup screen was scrolled
+  // down when "Generate Bracket" was tapped, the page's own scroll position
+  // carries over into this screen (it's the same SPA, not a navigation),
+  // landing the viewport partway down the bracket (e.g. on match 2) instead
+  // of at the header/round 1. Reset both, and do it again a beat later in
+  // case content height is still settling on first paint.
   useEffect(() => {
-    if (bracketScrollRef.current) {
-      bracketScrollRef.current.scrollTop = 0;
-      bracketScrollRef.current.scrollLeft = 0;
-    }
+    const resetScroll = () => {
+      if (bracketScrollRef.current) {
+        bracketScrollRef.current.scrollTop = 0;
+        bracketScrollRef.current.scrollLeft = 0;
+      }
+      window.scrollTo(0, 0);
+    };
+    resetScroll();
+    const t = setTimeout(resetScroll, 60);
+    return () => clearTimeout(t);
   }, []);
   // closedBrackets now passed in as a prop from App so it can be persisted/resumed
 
@@ -2402,6 +2390,12 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
             return (
               <button key={key} onClick={() => {
                 setActiveTab(key === "lb" ? "lb-0" : key === "plate" ? "plate-0" : "wb-0");
+                // Switching rounds can change other columns' gap/offset
+                // (the collapse/expand animation, 0.35s). Measuring and
+                // scrolling before that settles targets a position the
+                // layout is about to move away from, which is what made
+                // the destination round land partially cut off. Wait for
+                // the transition to finish first.
                 setTimeout(() => {
                   const col = document.getElementById(colId);
                   const container = bracketScrollRef.current;
@@ -2412,7 +2406,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                     container.scrollTo({ left: target, top: 0, behavior: "smooth" });
                     window.scrollTo({ top: container.getBoundingClientRect().top + window.scrollY - 100, behavior: "smooth" });
                   }
-                }, 30);
+                }, 380);
               }} style={{
                 padding: "8px 18px",
                 background: isActive ? color : CARD,
@@ -2444,7 +2438,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                     container.scrollTo({ left: target, top: 0, behavior: "smooth" });
                     window.scrollTo({ top: container.getBoundingClientRect().top + window.scrollY - 100, behavior: "smooth" });
                   }
-                }, 30);
+                }, 380);
               }} style={{
                 flex: "0 0 auto", padding: "6px 14px",
                 background: isActive ? TEXT : "transparent",
