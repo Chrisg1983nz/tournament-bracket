@@ -2143,6 +2143,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
   const [showCloseOut, setShowCloseOut] = useState(false);
   const [editingMatchId, setEditingMatchId] = useState(null);
   const bracketScrollRef = useRef(null);
+  const headerRef = useRef(null);
 
   // Scrolls so the given round column is CENTERED in the visible bracket
   // area (both horizontally and, by resetting the container's own vertical
@@ -2160,7 +2161,12 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
       const containerRect = container.getBoundingClientRect();
       const target = container.scrollLeft + colRect.left - containerRect.left - (containerRect.width - colRect.width) / 2;
       container.scrollTo({ left: target, top: 0, behavior: "smooth" });
-      window.scrollTo({ top: containerRect.top + window.scrollY - 100, behavior: "smooth" });
+      // The sticky header (back button, progress bar, pills) stays pinned
+      // to the top of the viewport at whatever its real rendered height
+      // is - a hardcoded guess here previously placed the round's title
+      // and top of its cards BEHIND that header instead of below it.
+      const headerHeight = headerRef.current ? headerRef.current.getBoundingClientRect().height : 100;
+      window.scrollTo({ top: containerRect.top + window.scrollY - headerHeight - 12, behavior: "smooth" });
     }, 50);
   };
 
@@ -2380,7 +2386,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
 
   return (
     <div style={{ minHeight: "100vh", background: BG, color: TEXT, fontFamily: FONT }}>
-      <div style={{ background: CARD, borderBottom: `1px solid ${BORDER}`, padding: "14px 16px", position: "sticky", top: 0, zIndex: 10 }}>
+      <div ref={headerRef} style={{ background: CARD, borderBottom: `1px solid ${BORDER}`, padding: "14px 16px", position: "sticky", top: 0, zIndex: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <button onClick={onBack} style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT, padding: "6px 12px", cursor: "pointer", fontSize: 15, fontFamily: "inherit", flexShrink: 0 }}>Back</button>
           <div style={{ flex: 1, minWidth: 0 }}>
