@@ -2150,15 +2150,21 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
   // that area into view on the page. The vertical target accounts for the
   // sticky header's REAL measured height (rather than a hardcoded guess)
   // so the round's title and top cards land below the header instead of
-  // behind it.
-  const scrollToColumn = (colId) => {
+  // behind it. Pass `center: true` to center the column instead of
+  // flush-left - used for Grand Final, which otherwise ends up hugging the
+  // left edge with nothing but empty space beside it, or the next
+  // section's rounds crowding in right next to it.
+  const scrollToColumn = (colId, opts = {}) => {
+    const center = !!opts.center;
     setTimeout(() => {
       const col = document.getElementById(colId);
       const container = bracketScrollRef.current;
       if (!col || !container) return;
       const colRect = col.getBoundingClientRect();
       const containerRect = container.getBoundingClientRect();
-      const target = container.scrollLeft + colRect.left - containerRect.left - 16;
+      const target = center
+        ? container.scrollLeft + colRect.left - containerRect.left - (containerRect.width - colRect.width) / 2
+        : container.scrollLeft + colRect.left - containerRect.left - 16;
       container.scrollTo({ left: target, top: 0, behavior: "smooth" });
       const headerHeight = headerRef.current ? headerRef.current.getBoundingClientRect().height : 100;
       window.scrollTo({ top: containerRect.top + window.scrollY - headerHeight - 12, behavior: "smooth" });
@@ -2173,9 +2179,9 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
   // (the content itself did switch, just off-screen). This does not touch
   // any of the collapse/expand layout math (computeTopologyLayout etc.) -
   // it only changes activeTab (exactly as before) and then scrolls.
-  const goToTab = (tabKey, colId) => {
+  const goToTab = (tabKey, colId, opts) => {
     setActiveTab(tabKey);
-    scrollToColumn(colId);
+    scrollToColumn(colId, opts);
   };
 
   // Measure the real rendered height of a match card so the bracket
@@ -2444,7 +2450,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
             const isActive = activeTab === key;
             return (
               <button key={key} onClick={() => {
-                goToTab(key, colId);
+                goToTab(key, colId, { center: key === "gf" });
               }} style={{
                 flex: "0 0 auto", padding: "6px 14px",
                 background: isActive ? TEXT : "transparent",
@@ -2727,7 +2733,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
               {wbInProgress ? "Continue to Winners Bracket" : "Go to Winners Bracket"}
             </button>
           )}
-          <button onClick={() => goToTab("gf", "round-col-gf-0")}
+          <button onClick={() => goToTab("gf", "round-col-gf-0", { center: true })}
             style={{ flex: 1, padding: "16px", background: GOLD, border: "none", borderRadius: 14, color: "#0D0F14", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
             Go to Grand Final
           </button>
