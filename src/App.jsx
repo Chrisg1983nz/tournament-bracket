@@ -2143,6 +2143,40 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
   const [showCloseOut, setShowCloseOut] = useState(false);
   const [editingMatchId, setEditingMatchId] = useState(null);
   const bracketScrollRef = useRef(null);
+  const headerRef = useRef(null);
+
+  // Scrolls so the given round column sits flush against the left edge of
+  // the visible bracket area (matching the original behavior), and brings
+  // that area into view on the page. The vertical target accounts for the
+  // sticky header's REAL measured height (rather than a hardcoded guess)
+  // so the round's title and top cards land below the header instead of
+  // behind it.
+  const scrollToColumn = (colId) => {
+    setTimeout(() => {
+      const col = document.getElementById(colId);
+      const container = bracketScrollRef.current;
+      if (!col || !container) return;
+      const colRect = col.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      const target = container.scrollLeft + colRect.left - containerRect.left - 16;
+      container.scrollTo({ left: target, top: 0, behavior: "smooth" });
+      const headerHeight = headerRef.current ? headerRef.current.getBoundingClientRect().height : 100;
+      window.scrollTo({ top: containerRect.top + window.scrollY - headerHeight - 12, behavior: "smooth" });
+    }, 380);
+  };
+
+  // Every place that switches tabs - pill buttons, "Go to Grand Final",
+  // close-out overlay shortcuts, etc. - needs to both change activeTab AND
+  // physically scroll there. A few of these previously only called
+  // setActiveTab and relied on the viewport already being in the right
+  // place, which is why e.g. "Go to Grand Final" appeared to do nothing
+  // (the content itself did switch, just off-screen). This does not touch
+  // any of the collapse/expand layout math (computeTopologyLayout etc.) -
+  // it only changes activeTab (exactly as before) and then scrolls.
+  const goToTab = (tabKey, colId) => {
+    setActiveTab(tabKey);
+    scrollToColumn(colId);
+  };
 
   // Measure the real rendered height of a match card so the bracket
   // alignment/connector math lines up pixel-for-pixel, rather than guessing.
@@ -2248,14 +2282,14 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
     setShowCloseOut(false);
     // Navigate to the next bracket that still needs attention (in progress or awaiting close)
     if (activeSection === "plate") {
-      if (!wbSettled) setActiveTab("wb-0");
-      else if (!lbSettled) setActiveTab("lb-0");
+      if (!wbSettled) goToTab("wb-0", "round-col-wb-0");
+      else if (!lbSettled) goToTab("lb-0", "round-col-lb-0");
     } else if (activeSection === "wb" || activeSection === "gf") {
-      if (!lbSettled) setActiveTab("lb-0");
-      else if (!plateSettled) setActiveTab("plate-0");
+      if (!lbSettled) goToTab("lb-0", "round-col-lb-0");
+      else if (!plateSettled) goToTab("plate-0", "round-col-plate-0");
     } else if (activeSection === "lb") {
-      if (!wbSettled) setActiveTab("wb-0");
-      else if (!plateSettled) setActiveTab("plate-0");
+      if (!wbSettled) goToTab("wb-0", "round-col-wb-0");
+      else if (!plateSettled) goToTab("plate-0", "round-col-plate-0");
     }
   };
 
@@ -2348,7 +2382,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
 
   return (
     <div style={{ minHeight: "100vh", background: BG, color: TEXT, fontFamily: FONT }}>
-      <div style={{ background: CARD, borderBottom: `1px solid ${BORDER}`, padding: "14px 16px", position: "sticky", top: 0, zIndex: 10 }}>
+      <div ref={headerRef} style={{ background: CARD, borderBottom: `1px solid ${BORDER}`, padding: "14px 16px", position: "sticky", top: 0, zIndex: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <button onClick={onBack} style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 8, color: TEXT, padding: "6px 12px", cursor: "pointer", fontSize: 15, fontFamily: "inherit", flexShrink: 0 }}>Back</button>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -2389,24 +2423,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
             const isActive = activeSection === key;
             return (
               <button key={key} onClick={() => {
-                setActiveTab(key === "lb" ? "lb-0" : key === "plate" ? "plate-0" : "wb-0");
-                // Switching rounds can change other columns' gap/offset
-                // (the collapse/expand animation, 0.35s). Measuring and
-                // scrolling before that settles targets a position the
-                // layout is about to move away from, which is what made
-                // the destination round land partially cut off. Wait for
-                // the transition to finish first.
-                setTimeout(() => {
-                  const col = document.getElementById(colId);
-                  const container = bracketScrollRef.current;
-                  if (col && container) {
-                    const colLeft = col.getBoundingClientRect().left;
-                    const containerLeft = container.getBoundingClientRect().left;
-                    const target = container.scrollLeft + colLeft - containerLeft - 16;
-                    container.scrollTo({ left: target, top: 0, behavior: "smooth" });
-                    window.scrollTo({ top: container.getBoundingClientRect().top + window.scrollY - 100, behavior: "smooth" });
-                  }
-                }, 380);
+                goToTab(key === "lb" ? "lb-0" : key === "plate" ? "plate-0" : "wb-0", colId);
               }} style={{
                 padding: "8px 18px",
                 background: isActive ? color : CARD,
@@ -2427,18 +2444,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
             const isActive = activeTab === key;
             return (
               <button key={key} onClick={() => {
-                setActiveTab(key);
-                setTimeout(() => {
-                  const col = document.getElementById(colId);
-                  const container = bracketScrollRef.current;
-                  if (col && container) {
-                    const colLeft = col.getBoundingClientRect().left;
-                    const containerLeft = container.getBoundingClientRect().left;
-                    const target = container.scrollLeft + colLeft - containerLeft - 16;
-                    container.scrollTo({ left: target, top: 0, behavior: "smooth" });
-                    window.scrollTo({ top: container.getBoundingClientRect().top + window.scrollY - 100, behavior: "smooth" });
-                  }
-                }, 380);
+                goToTab(key, colId);
               }} style={{
                 flex: "0 0 auto", padding: "6px 14px",
                 background: isActive ? TEXT : "transparent",
@@ -2716,12 +2722,12 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
       {activeSection === "lb" && grandFinalEnabled && lbComplete && !showCloseOut && (
         <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: `linear-gradient(to top, ${BG} 70%, ${BG}00)`, padding: "20px 16px 16px", display: "flex", gap: 10 }}>
           {!wbSettled && (
-            <button onClick={() => setActiveTab("wb-0")}
+            <button onClick={() => goToTab("wb-0", "round-col-wb-0")}
               style={{ flex: 1, padding: "16px", background: `${GOLD}18`, border: `1px solid ${GOLD}`, borderRadius: 14, color: GOLD, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
               {wbInProgress ? "Continue to Winners Bracket" : "Go to Winners Bracket"}
             </button>
           )}
-          <button onClick={() => setActiveTab("gf")}
+          <button onClick={() => goToTab("gf", "round-col-gf-0")}
             style={{ flex: 1, padding: "16px", background: GOLD, border: "none", borderRadius: 14, color: "#0D0F14", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
             Go to Grand Final
           </button>
@@ -2764,21 +2770,21 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                 <>
                   {/* Navigate to LB if it isn't settled yet (still running or awaiting close) */}
                   {!lbSettled && activeSection !== "lb" && (
-                    <button onClick={() => { setShowCloseOut(false); setActiveTab("lb-0"); }}
+                    <button onClick={() => { setShowCloseOut(false); goToTab("lb-0", "round-col-lb-0"); }}
                       style={{ width: "100%", padding: "14px", background: `${BLUE}18`, border: `1px solid ${BLUE}`, borderRadius: 12, color: BLUE, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                       {lbInProgress ? "Continue to Losers Bracket" : "Close Out Losers Bracket"}
                     </button>
                   )}
                   {/* Navigate to plate if it isn't settled yet */}
                   {!plateSettled && activeSection !== "plate" && (
-                    <button onClick={() => { setShowCloseOut(false); setActiveTab("plate-0"); }}
+                    <button onClick={() => { setShowCloseOut(false); goToTab("plate-0", "round-col-plate-0"); }}
                       style={{ width: "100%", padding: "14px", background: `${ORANGE}18`, border: `1px solid ${ORANGE}`, borderRadius: 12, color: ORANGE, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                       {plateInProgress ? "Continue to Plate" : "Close Out Plate"}
                     </button>
                   )}
                   {/* Navigate back to main WB if it isn't settled yet - whether still being played or finished-but-unclosed */}
                   {!wbSettled && activeSection !== "wb" && activeSection !== "gf" && (
-                    <button onClick={() => { setShowCloseOut(false); setActiveTab("wb-0"); }}
+                    <button onClick={() => { setShowCloseOut(false); goToTab("wb-0", "round-col-wb-0"); }}
                       style={{ width: "100%", padding: "14px", background: `${GOLD}18`, border: `1px solid ${GOLD}`, borderRadius: 12, color: GOLD, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                       {wbInProgress ? "Continue to Main Bracket" : "Close Out Main Tournament"}
                     </button>
