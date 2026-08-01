@@ -2145,14 +2145,12 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
   const bracketScrollRef = useRef(null);
   const headerRef = useRef(null);
 
-  // Scrolls so the given round column is CENTERED in the visible bracket
-  // area, and brings that area into view on the page. Centering (rather
-  // than flush-left with a small margin) is what keeps a single-card
-  // column like Grand Final from being shoved to the very edge, and keeps
-  // a full round's cards from getting cropped against the container edge.
-  // The vertical target accounts for the sticky header's REAL measured
-  // height (rather than a hardcoded guess) so the round's title and top
-  // cards land below the header instead of behind it.
+  // Scrolls so the given round column sits flush against the left edge of
+  // the visible bracket area (matching the original behavior), and brings
+  // that area into view on the page. The vertical target accounts for the
+  // sticky header's REAL measured height (rather than a hardcoded guess)
+  // so the round's title and top cards land below the header instead of
+  // behind it.
   const scrollToColumn = (colId) => {
     setTimeout(() => {
       const col = document.getElementById(colId);
@@ -2160,7 +2158,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
       if (!col || !container) return;
       const colRect = col.getBoundingClientRect();
       const containerRect = container.getBoundingClientRect();
-      const target = container.scrollLeft + colRect.left - containerRect.left - (containerRect.width - colRect.width) / 2;
+      const target = container.scrollLeft + colRect.left - containerRect.left - 16;
       container.scrollTo({ left: target, top: 0, behavior: "smooth" });
       const headerHeight = headerRef.current ? headerRef.current.getBoundingClientRect().height : 100;
       window.scrollTo({ top: containerRect.top + window.scrollY - headerHeight - 12, behavior: "smooth" });
