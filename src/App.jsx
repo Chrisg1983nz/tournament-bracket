@@ -2146,12 +2146,13 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
   const headerRef = useRef(null);
 
   // Scrolls so the given round column is CENTERED in the visible bracket
-  // area (both horizontally and, by resetting the container's own vertical
-  // scroll, vertically at its top) and brings that area into view on the
-  // page. Centering - rather than flush-left with a small margin - is what
-  // keeps a single-card column like Grand Final from being shoved to the
-  // very edge with nothing but empty space beside it, and keeps a full
-  // round's cards from getting cropped against the edge of the container.
+  // area, and brings that area into view on the page. Centering (rather
+  // than flush-left with a small margin) is what keeps a single-card
+  // column like Grand Final from being shoved to the very edge, and keeps
+  // a full round's cards from getting cropped against the container edge.
+  // The vertical target accounts for the sticky header's REAL measured
+  // height (rather than a hardcoded guess) so the round's title and top
+  // cards land below the header instead of behind it.
   const scrollToColumn = (colId) => {
     setTimeout(() => {
       const col = document.getElementById(colId);
@@ -2161,13 +2162,9 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
       const containerRect = container.getBoundingClientRect();
       const target = container.scrollLeft + colRect.left - containerRect.left - (containerRect.width - colRect.width) / 2;
       container.scrollTo({ left: target, top: 0, behavior: "smooth" });
-      // The sticky header (back button, progress bar, pills) stays pinned
-      // to the top of the viewport at whatever its real rendered height
-      // is - a hardcoded guess here previously placed the round's title
-      // and top of its cards BEHIND that header instead of below it.
       const headerHeight = headerRef.current ? headerRef.current.getBoundingClientRect().height : 100;
       window.scrollTo({ top: containerRect.top + window.scrollY - headerHeight - 12, behavior: "smooth" });
-    }, 50);
+    }, 380);
   };
 
   // Every place that switches tabs - pill buttons, "Go to Grand Final",
@@ -2175,12 +2172,13 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
   // physically scroll there. A few of these previously only called
   // setActiveTab and relied on the viewport already being in the right
   // place, which is why e.g. "Go to Grand Final" appeared to do nothing
-  // (the content itself did switch, just off-screen).
+  // (the content itself did switch, just off-screen). This does not touch
+  // any of the collapse/expand layout math (computeTopologyLayout etc.) -
+  // it only changes activeTab (exactly as before) and then scrolls.
   const goToTab = (tabKey, colId) => {
     setActiveTab(tabKey);
     scrollToColumn(colId);
   };
-
 
   // Measure the real rendered height of a match card so the bracket
   // alignment/connector math lines up pixel-for-pixel, rather than guessing.
