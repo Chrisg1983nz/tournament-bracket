@@ -16,6 +16,7 @@ const FONT   = "Helvetica, Arial, sans-serif";
 const MONO   = "'SF Mono', 'Fira Code', 'Fira Mono', monospace";
 
 const STORAGE_KEY  = "tournament:active-state";
+const APP_VERSION  = "1.0.0";
 const HISTORY_KEY  = "tournament:history";
 const LOGO_KEY      = "tournament:logo";
 
@@ -1367,6 +1368,30 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
   const [plateEnabled, setPlateEnabled] = useState(false);
   const [platePlayers, setPlatePlayers] = useState([]);
 
+  // "Check for Updates": the incognito-only-shows-new-version symptom is
+  // almost always a stale Cache Storage entry or leftover service worker
+  // serving an old bundle. This clears both, then hard-reloads bypassing
+  // the browser's HTTP cache - i.e. does programmatically what opening an
+  // incognito window does by having nothing cached to begin with.
+  const [updateStatus, setUpdateStatus] = useState("idle"); // idle | checking | done
+  const handleCheckForUpdates = async () => {
+    setUpdateStatus("checking");
+    try {
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      }
+      if ("serviceWorker" in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.unregister()));
+      }
+    } catch (e) {}
+    setUpdateStatus("done");
+    setTimeout(() => {
+      window.location.href = window.location.href.split("#")[0] + "?_r=" + Date.now();
+    }, 300);
+  };
+
   const updateCount = (n) => {
     const c = Math.max(2, Math.min(64, n));
     setCount(c);
@@ -1712,6 +1737,18 @@ function SetupScreen({ onGenerateBracket, onGenerateGroups, savedExists, savedAt
                 </div>
               ))}
             </div>
+          </div>
+
+          {/* Version footer */}
+          <div style={{ textAlign: "center", paddingTop: 8, paddingBottom: 4 }}>
+            <div style={{ fontSize: 11, color: MUTED, fontFamily: MONO, marginBottom: 8 }}>v{APP_VERSION}</div>
+            <button
+              onClick={handleCheckForUpdates}
+              disabled={updateStatus === "checking"}
+              style={{ background: "transparent", border: `1px solid ${BORDER}`, borderRadius: 8, color: MUTED, fontSize: 12, padding: "6px 12px", cursor: updateStatus === "checking" ? "default" : "pointer", fontFamily: "inherit" }}
+            >
+              {updateStatus === "checking" ? "Checking..." : updateStatus === "done" ? "Up to date - reloading..." : "Check for Updates"}
+            </button>
           </div>
         </div>
       </div>
@@ -2144,26 +2181,57 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
   const [editingMatchId, setEditingMatchId] = useState(null);
   const bracketScrollRef = useRef(null);
   const headerRef = useRef(null);
+  const [headerHeight, setHeaderHeight] = useState(0);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const measure = () => setHeaderHeight(el.getBoundingClientRect().height);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Scrolls so the given round column sits flush against the left edge of
   // the visible bracket area (matching the original behavior), and brings
-  // that area into view on the page. The vertical target accounts for the
-  // sticky header's REAL measured height (rather than a hardcoded guess)
-  // so the round's title and top cards land below the header instead of
-  // behind it.
-  const scrollToColumn = (colId) => {
+  // that area into view on the page. Pass `center: true` to center the
+  // column instead of flush-left - used for Grand Final, which otherwise
+  // ends up hugging the left edge with nothing but empty space beside it,
+  // or the next section's rounds crowding in right next to it.
+  const scrollToColumn = (colId, opts = {}) => {
+    const center = !!opts.center;
+    const isDesktopNow = scale.tier === "desktop";
     setTimeout(() => {
       const col = document.getElementById(colId);
       const container = bracketScrollRef.current;
       if (!col || !container) return;
       const colRect = col.getBoundingClientRect();
       const containerRect = container.getBoundingClientRect();
-      const target = container.scrollLeft + colRect.left - containerRect.left - 16;
+      const target = center
+        ? container.scrollLeft + colRect.left - containerRect.left - (containerRect.width - colRect.width) / 2
+        : container.scrollLeft + colRect.left - containerRect.left - 16;
       container.scrollTo({ left: target, top: 0, behavior: "smooth" });
-      const headerHeight = headerRef.current ? headerRef.current.getBoundingClientRect().height : 100;
-      window.scrollTo({ top: containerRect.top + window.scrollY - headerHeight - 12, behavior: "smooth" });
+
+      if (isDesktopNow) {
+        // Desktop - unchanged: an explicit computed offset using the
+        // header's real measured height.
+        const headerHeightNow = headerRef.current ? headerRef.current.getBoundingClientRect().height : 100;
+        window.scrollTo({ top: containerRect.top + window.scrollY - headerHeightNow - 12, behavior: "smooth" });
+      } else {
+        // Mobile/tablet: a one-shot pixel calculation for window.scrollTo
+        // was landing short of clearing the sticky header - mobile
+        // browsers resize their own visible viewport/toolbar mid-scroll in
+        // a way that calculation doesn't account for. scrollIntoView is
+        // handled natively by the browser instead, and respects the
+        // column's own `scroll-margin-top` (set inline on each round
+        // column below, from the header's live measured height) for
+        // exactly this "clear the sticky header" case.
+        col.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+      }
     }, 380);
   };
+
 
   // Every place that switches tabs - pill buttons, "Go to Grand Final",
   // close-out overlay shortcuts, etc. - needs to both change activeTab AND
@@ -2173,9 +2241,9 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
   // (the content itself did switch, just off-screen). This does not touch
   // any of the collapse/expand layout math (computeTopologyLayout etc.) -
   // it only changes activeTab (exactly as before) and then scrolls.
-  const goToTab = (tabKey, colId) => {
+  const goToTab = (tabKey, colId, opts) => {
     setActiveTab(tabKey);
-    scrollToColumn(colId);
+    scrollToColumn(colId, opts);
   };
 
   // Measure the real rendered height of a match card so the bracket
@@ -2444,7 +2512,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
             const isActive = activeTab === key;
             return (
               <button key={key} onClick={() => {
-                goToTab(key, colId);
+                goToTab(key, colId, { center: key === "gf" });
               }} style={{
                 flex: "0 0 auto", padding: "6px 14px",
                 background: isActive ? TEXT : "transparent",
@@ -2507,7 +2575,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
               : allWbRounds[i + 1].length;
             return (
               <Fragment key={`wb-frag-${i}`}>
-                <div id={`round-col-wb-${i}`} style={{ flexShrink: 0, paddingRight: nextCount > 0 ? 0 : (scale.tier === "desktop" ? 40 : 28) }}>
+                <div id={`round-col-wb-${i}`} style={{ flexShrink: 0, paddingRight: nextCount > 0 ? 0 : (scale.tier === "desktop" ? 40 : 28), scrollMarginTop: scale.tier === "desktop" ? undefined : headerHeight + 12 }}>
                   <RoundCol
                     title={wbLabel(i, allWbRounds.length)}
                     matchIds={round} matchMap={matchMap}
@@ -2540,7 +2608,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
 
           {/* Grand Final column (double-elim only) */}
           {!isSingleElim && grandFinalEnabled && (
-            <div id="round-col-gf-0" style={{ flexShrink: 0, paddingRight: scale.tier === "desktop" ? 40 : 28 }}>
+            <div id="round-col-gf-0" style={{ flexShrink: 0, paddingRight: scale.tier === "desktop" ? 40 : 28, scrollMarginTop: scale.tier === "desktop" ? undefined : headerHeight + 12 }}>
               <div style={{ fontSize: 11, color: GOLD, letterSpacing: "0.08em", fontWeight: 700, marginBottom: 12, textTransform: "uppercase" }}>Grand Final</div>
               <div style={{ paddingTop: gfOffset, transition: "padding-top 0.35s cubic-bezier(0.4, 0, 0.2, 1)" }}>
                 <div data-bracket-card="true">
@@ -2600,7 +2668,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                   const targetIdx = hasNext ? (lbReverse ? idx : nextIdx) : null;
                   return (
                     <Fragment key={`lb-frag-${idx}`}>
-                      <div id={`round-col-lb-${idx}`} style={{ flexShrink: 0, paddingRight: hasNext ? 0 : (scale.tier === "desktop" ? 40 : 28) }}>
+                      <div id={`round-col-lb-${idx}`} style={{ flexShrink: 0, paddingRight: hasNext ? 0 : (scale.tier === "desktop" ? 40 : 28), scrollMarginTop: scale.tier === "desktop" ? undefined : headerHeight + 12 }}>
                         <RoundCol
                           title={lbLabel(idx)} matchIds={round} matchMap={matchMap}
                           onPickWinner={handlePick} onChangeWinner={handleChangeWinner} onScore={handleScore} onResetMatch={handleResetMatch}
@@ -2648,7 +2716,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
                   const nextCount = isLast ? 0 : pr[i + 1].length;
                   return (
                     <Fragment key={`plate-frag-${i}`}>
-                      <div id={`round-col-plate-${i}`} style={{ flexShrink: 0, paddingRight: nextCount > 0 ? 0 : (scale.tier === "desktop" ? 40 : 28) }}>
+                      <div id={`round-col-plate-${i}`} style={{ flexShrink: 0, paddingRight: nextCount > 0 ? 0 : (scale.tier === "desktop" ? 40 : 28), scrollMarginTop: scale.tier === "desktop" ? undefined : headerHeight + 12 }}>
                         <RoundCol
                           title={lbl} matchIds={round} matchMap={pm}
                           onPickWinner={(id, w) => setPlateMatchMap(prev => recordWinner(prev, id, w))}
@@ -2727,7 +2795,7 @@ function BracketScreen({ bracketData, setMatchMap, plateData, setPlateMatchMap, 
               {wbInProgress ? "Continue to Winners Bracket" : "Go to Winners Bracket"}
             </button>
           )}
-          <button onClick={() => goToTab("gf", "round-col-gf-0")}
+          <button onClick={() => goToTab("gf", "round-col-gf-0", { center: true })}
             style={{ flex: 1, padding: "16px", background: GOLD, border: "none", borderRadius: 14, color: "#0D0F14", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
             Go to Grand Final
           </button>
